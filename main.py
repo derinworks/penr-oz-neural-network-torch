@@ -239,7 +239,8 @@ async def train_model(body: TrainingRequest = Body(...)):
 def model_progress(model_id: str = ModelIdQuery(...)):
     model = NeuralNetworkModel.deserialize(model_id)
     return {
-        "progress": model.progress
+        "progress": model.progress,
+        "average_cost": model.avg_cost,
     }
 
 

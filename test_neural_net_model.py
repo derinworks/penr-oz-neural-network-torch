@@ -130,6 +130,7 @@ class TestNeuralNetModel(unittest.TestCase):
         # Ensure training progress
         self.assertGreater(len(model.progress), 0)
         self.assertNotEqual(model.progress[0]["cost"], initial_cost)
+        self.assertEqual(sum([p["cost"] for p in model.progress]) / len(model.progress), model.avg_cost)
         self.assertEqual(len(model.training_data_buffer), 0)
 
         # Deserialize and check if recorded training
@@ -154,6 +155,7 @@ class TestNeuralNetModel(unittest.TestCase):
                 self.assertAlmostEqual(ub, pb, 4, f"Element at loc {i}, {j}")
         self.assertEqual(len(persisted_model.progress), len(model.progress))
         self.assertEqual(len(persisted_model.training_data_buffer), 0)
+        self.assertEqual(persisted_model.avg_cost, model.avg_cost)
 
     def test_train_with_insufficient_data(self):
         model = NeuralNetworkModel(model_id="test", layer_sizes=[9, 9, 9], activation_algos=["relu"] * 2)
