@@ -7,14 +7,14 @@ import functions as func
 def vector(values: list[float]) -> Tensor:
     """
     :param values: list of floats
-    :return: a 2D Tensor of type double requiring gradient
+    :return: a 1D Tensor of type double requiring gradient
     """
     return torch.tensor(values, dtype=torch.float64, requires_grad=True)
 
 def scalar(value: float) -> Tensor:
     """
     :param value: a float
-    :return: a 1D Tensor of type double requiring gradient
+    :return: a scalar Tensor of type double requiring gradient
     """
     return torch.tensor(value, dtype=torch.float64, requires_grad=True)
 

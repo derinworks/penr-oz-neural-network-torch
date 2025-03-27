@@ -37,15 +37,7 @@ class Neuron:
         :param input_vector: an input vector
         :return: output
         """
-        return self.weights.vdot(input_vector) + self.bias
-
-    def activate(self, input_vector: Tensor) -> Activation:
-        """
-        Activates this neuron with given input.
-        :param input_vector: an input vector
-        :return: activated output scalar
-        """
-        return Activation(self.output(input_vector)).activate(self.activation_algo)
+        return (self.weights @ input_vector) + self.bias
 
 class Layer:
     def __init__(self, input_size: int = 0, output_size: int = 0, weight_algo="xavier", bias_algo="random", activation_algo="relu"):
