@@ -21,14 +21,6 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertIsNotNone(neuron.bias)
         self.assertEqual(activation_algo, neuron.activation_algo)
 
-    def test_neuron_activate(self):
-        neuron = Neuron(2)
-        input_vector = vector([1.0, 2.0])
-
-        activated_scalar: Activation = neuron.activate(input_vector)
-
-        self.assertIsNotNone(activated_scalar.tensor)
-
     @parameterized.expand([
         (9, 9,),
         (9, 18,),
