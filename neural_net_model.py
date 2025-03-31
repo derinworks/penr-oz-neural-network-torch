@@ -234,12 +234,12 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             self.serialize() # serialize model with partial training data for next time
             return
 
-        # Calculate sample size
-        training_sample_size = int(len(training_data) / epochs)  # sample equally per epoch
-
         # Proceed with training using combined data if buffer size is sufficient
         training_data = self.training_data_buffer
         self.training_data_buffer = []  # Clear buffer
+
+        # Calculate sample size
+        training_sample_size = int(len(training_data) / epochs)  # sample equally per epoch
 
         # Adjust optimizer hyperparameters
         for param_group in self.optimizer.param_groups:
