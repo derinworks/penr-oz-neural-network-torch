@@ -40,9 +40,15 @@ class Layer:
     def output(self, input_tensor: Tensor) -> Tensor:
         """
         Gives output of this layer of neurons pre-activation for given input
-        :param input_tensor: an input tensor
-        :return: pre-activation
+        :param input_tensor: an input tensor (1D vector or 2D batch matrix both supported)
+        :return: pre-activation (shape corresponding to input)
         """
+        # PyTorch internally treats 1D vector of shape (input_size, ) as (1, input_size)
+        # to achieve dot product of (1, input_size) x (input_size, output_size) = (1, output_size)
+        # then automatically squeezes it to (output_size,) which matches biases shape (output_size,)
+        # on flip side for batch 2D vectors of shape (batch_size, input_size) dot product result is
+        # of shape (batch_size, output_size) then biases are automatically un-squeezed to shape
+        # (batch_size, output_size) to repeatedly added for an output of shape (batch_size, output_size)
         return input_tensor @ self.weights + self.biases
 
 class MultiLayerPerceptron:
@@ -109,7 +115,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             "layers": [{
                 "algo": l.activation_algo,
                 "weights": l.weights.tolist(),
-                "biases": l.biases.squeeze(0).tolist(),
+                "biases": l.biases.tolist(),
             } for l in self.layers],
             "progress": self.progress,
             "training_data_buffer": self.training_data_buffer,
@@ -173,17 +179,17 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         :return: activation, cost (optional)
         """
         # input 2D tensor shape 1 by input size column vector
-        input_tensor = torch.tensor([input_vector], dtype=torch.float64)
+        input_tensor = torch.tensor(input_vector, dtype=torch.float64)
         # forward pass
-        activation, cost = self._forward(input_tensor, [target])
+        activation, cost = self._forward(input_tensor, target)
         # convert output back to 1D to get same shape list out
-        activation = activation.squeeze(0).tolist()
+        activation = activation.tolist()
         # if target specified, then get float out, otherwise no cost
         cost = cost.item() if cost.numel() > 0 else None
         # activation same shape and a float cost is returned
         return activation, cost
 
-    def _forward(self, input_tensor: Tensor, target: list[list[float]], dropout_rate=0.0) -> Tuple[Tensor, Tensor]:
+    def _forward(self, input_tensor: Tensor, target: list, dropout_rate=0.0) -> Tuple[Tensor, Tensor]:
         pre_activation = input_tensor
         activation = input_tensor
         num_layers = len(self.layers)

@@ -13,9 +13,9 @@ def matrix(values: list[list[float]]) -> Tensor:
 def vector(values: list[float]) -> Tensor:
     """
     :param values: list of floats
-    :return: a 2D Tensor as column vector of type double requiring gradient
+    :return: a 1D Tensor of type double requiring gradient
     """
-    return matrix([values])
+    return torch.tensor(values, dtype=torch.float64, requires_grad=True)
 
 def activate(tensor: Tensor, algo: str) -> Tensor:
     """
@@ -30,11 +30,11 @@ def activate(tensor: Tensor, algo: str) -> Tensor:
         return tensor.relu()
     elif algo == "tanh":
         return tensor.tanh()
-    elif algo == "softmax" and tensor.dim() == 2:
-        return tensor.softmax(dim=1)
+    elif algo == "softmax":
+        return tensor.softmax(dim=tensor.ndim - 1)
     raise ValueError(f"Unsupported activation algorithm: {algo}")
 
-def calculate_cost(algo: str, logits: Tensor, activation: Tensor, target: list[list[float]]):
+def calculate_cost(algo: str, logits: Tensor, activation: Tensor, target: list):
     """
     Calculates lost based on activation algorithm given
     :param algo: The activation algorithm ("sigmoid", "relu", "tanh", "softmax").
@@ -46,7 +46,8 @@ def calculate_cost(algo: str, logits: Tensor, activation: Tensor, target: list[l
     if target is None or any(tgt is None for tgt in target):
         return torch.empty(0)
     elif algo == "softmax":
-        label_tensor = torch.tensor([tgt[0] for tgt in target], dtype=torch.int64)
+        label_data =  target[0] if logits.ndim == 1 else [tgt[0] for tgt in target]
+        label_tensor = torch.tensor(label_data, dtype=torch.int64)
         return nn.functional.cross_entropy(logits, label_tensor)
     else:
         target_tensor = torch.tensor(target, dtype=torch.float64)

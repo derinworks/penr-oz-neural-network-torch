@@ -15,7 +15,7 @@ class TestGradients(unittest.TestCase):
     def test_init_vector(self, values):
         v = vector(values)
 
-        self.assertListEqual([values], v.tolist())
+        self.assertListEqual(values, v.tolist())
         self.assertTrue(v.requires_grad)
 
     @parameterized.expand([
@@ -39,7 +39,7 @@ class TestGradients(unittest.TestCase):
     def test_activation(self, value, algo, expected):
         actual = activate(vector([value]), algo)
 
-        self.assertAlmostEqual(expected, actual.squeeze(0).item(), 4)
+        self.assertAlmostEqual(expected, actual.item(), 4)
 
     @parameterized.expand([
         ([2.0, 1.0], "softmax", [0.7311, 0.2689]),
@@ -48,7 +48,7 @@ class TestGradients(unittest.TestCase):
     def test_vector_activation(self, values, algo, expected):
         actual = activate(vector(values), algo)
 
-        np.testing.assert_array_almost_equal(actual.tolist(), [expected], 4)
+        np.testing.assert_array_almost_equal(actual.tolist(), expected, 4)
 
     def test_activation_unsupported(self):
         with self.assertRaises(ValueError) as ve:
@@ -61,7 +61,7 @@ class TestGradients(unittest.TestCase):
         ("softmax", [2.0, 1.0, -1.0], [0.2, 0.3, 0.5], [1.0], 1.349),
     ])
     def test_vector_calculate_cost(self, algo, logits, activation, target, expected):
-        actual = calculate_cost(algo, vector(logits), vector(activation), [target])
+        actual = calculate_cost(algo, vector(logits), vector(activation), target)
 
         self.assertAlmostEqual(expected, actual.item(), 4)
 
@@ -79,7 +79,7 @@ class TestGradients(unittest.TestCase):
     def test_back_propagate(self, tensors: tuple[Tensor], f, expected):
         result = f(*tensors)
         result.backward()
-        gradients = [g for t in reversed(tensors) for g in t.grad.squeeze(0).tolist()]
+        gradients = [g for t in reversed(tensors) for g in t.grad.tolist()]
 
         np.testing.assert_array_almost_equal(gradients, expected, 4)
 

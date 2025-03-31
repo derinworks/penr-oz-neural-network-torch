@@ -16,7 +16,7 @@ class TestNeuralNetModel(unittest.TestCase):
         layer = Layer(input_size, output_size, weight_algo, bias_algo, activation_algo)
 
         self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
-        self.assertEqual((1, output_size), tuple(layer.biases.shape))
+        self.assertEqual((output_size,), tuple(layer.biases.shape))
         self.assertEqual(activation_algo, layer.activation_algo)
 
     @parameterized.expand([
@@ -32,7 +32,7 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertEqual(len(multi_layer_perceptron.layers), len(layer_sizes) - 1)
         for input_size, output_size, layer in zip(layer_sizes[:-1], layer_sizes[1:], multi_layer_perceptron.layers):
             self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
-            self.assertEqual((1, output_size), tuple(layer.biases.shape))
+            self.assertEqual((output_size,), tuple(layer.biases.shape))
 
     @parameterized.expand([
         ([9, 9, 9], "xavier", "random",),
@@ -51,7 +51,7 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertEqual("test", model.model_id)
         for input_size, output_size, layer in zip(layer_sizes[:-1], layer_sizes[1:], model.layers):
             self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
-            self.assertEqual((1, output_size), tuple(layer.biases.shape))
+            self.assertEqual((output_size,), tuple(layer.biases.shape))
         self.assertEqual(0, len(model.progress))
         self.assertEqual(expected_buffer_size, model.training_buffer_size)
         self.assertEqual(expected_buffer_size, model.num_params)
