@@ -5,8 +5,6 @@ from fastapi.params import Query
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 import asyncio
-from torch import Tensor
-from gradients import vector
 from neural_net_model import NeuralNetworkModel
 
 app = FastAPI(
@@ -211,11 +209,11 @@ def compute_model_output(body:
                                  }
                              } for idx, example in enumerate(EXAMPLES)} )):
     model = NeuralNetworkModel.deserialize(body.model_id)
-    input_vector = vector(body.input.activation_vector)
-    target = Tensor(body.input.target_vector).double() if body.input.target_vector else None
+    input_vector = body.input.activation_vector
+    target = body.input.target_vector
     output, cost = model.compute_output(input_vector, target)
-    return {"output_vector": output.tensor.tolist(),
-            "cost": cost.item() if cost.numel() > 0 else None,
+    return {"output_vector": output,
+            "cost": cost,
             }
 
 
@@ -225,8 +223,7 @@ async def train_model(body: TrainingRequest = Body(...)):
 
     async def train():
         model.train(
-            [(vector(data.activation_vector), Tensor(data.target_vector).double())
-             for data in body.training_data],
+            [(data.activation_vector, data.target_vector) for data in body.training_data],
             epochs=body.epochs,
             learning_rate=body.learning_rate,
         )

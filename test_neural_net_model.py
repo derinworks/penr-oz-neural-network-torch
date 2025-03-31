@@ -1,37 +1,23 @@
 import unittest
 from parameterized import parameterized
-from torch import Tensor
-from neural_net_model import NeuralNetworkModel, Neuron, Layer, MultiLayerPerceptron
-from gradients import vector, Activation
+import numpy as np
+from neural_net_model import NeuralNetworkModel, Layer, MultiLayerPerceptron
 
 class TestNeuralNetModel(unittest.TestCase):
 
     @parameterized.expand([
-        (9, "xavier", "random", "sigmoid"),
-        (18, "xavier", "zeros", "relu"),
-        (9, "he", "zeros", "tanh"),
-        (4, "he", "random", "relu"),
-        (3, "gaussian", "random", "sigmoid"),
+        (9, 9, "xavier", "random", "sigmoid"),
+        (18, 9, "xavier", "zeros", "relu"),
+        (9, 3, "he", "zeros", "tanh"),
+        (4, 4, "he", "random", "relu"),
+        (3, 9, "gaussian", "random", "sigmoid"),
     ])
-    def test_neuron_initialization(self, input_size, weight_algo, bias_algo, activation_algo):
-        neuron = Neuron(input_size, weight_algo, bias_algo, activation_algo)
+    def test_layer_initialization(self, input_size, output_size, weight_algo, bias_algo, activation_algo):
+        layer = Layer(input_size, output_size, weight_algo, bias_algo, activation_algo)
 
-        self.assertIsNotNone(neuron)
-        self.assertEqual(input_size, len(neuron.weights.tolist()))
-        self.assertIsNotNone(neuron.bias)
-        self.assertEqual(activation_algo, neuron.activation_algo)
-
-    @parameterized.expand([
-        (9, 9,),
-        (9, 18,),
-        (18, 9, ),
-    ])
-    def test_layer_initialization(self, input_size, output_size):
-        layer = Layer(input_size, output_size)
-
-        self.assertIsNotNone(layer)
-        self.assertEqual(output_size, len(layer.neurons))
-        self.assertEqual(input_size, len(layer.neurons[0].weights.tolist()))
+        self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
+        self.assertEqual((1, output_size), tuple(layer.biases.shape))
+        self.assertEqual(activation_algo, layer.activation_algo)
 
     @parameterized.expand([
         ([9, 9, 9], "xavier", "random",),
@@ -43,8 +29,10 @@ class TestNeuralNetModel(unittest.TestCase):
     def test_multi_layer_perceptron_initialization(self, layer_sizes, weight_algo, bias_algo):
         multi_layer_perceptron = MultiLayerPerceptron(layer_sizes, weight_algo, bias_algo)
 
-        self.assertIsNotNone(multi_layer_perceptron)
         self.assertEqual(len(multi_layer_perceptron.layers), len(layer_sizes) - 1)
+        for input_size, output_size, layer in zip(layer_sizes[:-1], layer_sizes[1:], multi_layer_perceptron.layers):
+            self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
+            self.assertEqual((1, output_size), tuple(layer.biases.shape))
 
     @parameterized.expand([
         ([9, 9, 9], "xavier", "random",),
@@ -61,63 +49,66 @@ class TestNeuralNetModel(unittest.TestCase):
         )
 
         self.assertEqual("test", model.model_id)
-        for i in range(len(layer_sizes) - 1):
-            self.assertEqual(layer_sizes[i], len(model.layers[i].neurons[0].weights.tolist()))
-            self.assertEqual(layer_sizes[i + 1], len(model.layers[i].neurons))
+        for input_size, output_size, layer in zip(layer_sizes[:-1], layer_sizes[1:], model.layers):
+            self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
+            self.assertEqual((1, output_size), tuple(layer.biases.shape))
         self.assertEqual(0, len(model.progress))
         self.assertEqual(expected_buffer_size, model.training_buffer_size)
+        self.assertEqual(expected_buffer_size, model.num_params)
 
     @parameterized.expand([
         ([9, 9, 9], ["sigmoid"] * 2,),
+        ([9, 9], ["softmax"], [4],),
         ([18, 9, 3], ["relu", "softmax"],),
-        ([9, 18, 9], ["tanh"] * 2,),
-        ([4, 8, 16], ["softmax"] * 2,),
+        ([9, 18, 9], ["tanh"] * 2, [0.5] * 9,),
+        ([4, 8, 16], ["tanh", "softmax"], [13],),
         ([3, 3, 3, 3], ["relu", "relu", "softmax"],),
     ])
-    def test_compute_output(self, layer_sizes: list[int], algos: list[str]):
+    def test_compute_output(self, layer_sizes: list[int], algos: list[str], target = None):
         model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
         input_sizes = layer_sizes[:-1]
         output_sizes = layer_sizes[1:]
-        sample_input = vector([0.5] * input_sizes[0])
+        sample_input = [0.5] * input_sizes[0]
 
-        output, cost = model.compute_output(sample_input)
+        output, cost = model.compute_output(sample_input, target)
 
-        self.assertEqual(output_sizes[-1], len(output.tensor.tolist()))
-        self.assertEqual(0, cost.numel())
+        self.assertEqual(output_sizes[-1], len(output))
+        if target is None:
+            self.assertIsNone(cost)
+        else:
+            self.assertIsNotNone(cost)
 
     @parameterized.expand([
-        ([9, 9, 9], ["sigmoid"] * 2,),
-        ([9, 9, 9], ["relu", "softmax"],),
-        ([9, 9, 9], ["tanh"] * 2,),
-        ([18, 9, 3], ["relu", "sigmoid"],),
-        ([9, 18, 9], ["sigmoid", "softmax"],),
-        ([4, 8, 16], ["sigmoid"] * 2,),
-        ([3, 3, 3, 3], ["relu", "relu", "softmax"],),
-        ([18, 9, 3], ["relu"] * 2,),
-        ([9, 18, 9], ["relu", "tanh"],),
+        ([9, 9, 9], ["sigmoid"] * 2, [1.0] + [0.0] * 8,),
+        ([9, 9, 9], ["relu", "softmax"], [1]),
+        ([9, 9, 9], ["tanh"] * 2, [1.0] + [0.0] * 8,),
+        ([18, 9, 3], ["relu", "sigmoid"], [1.0] + [0.0] * 2,),
+        ([9, 18, 9], ["sigmoid", "softmax"], [1]),
+        ([4, 8, 16], ["sigmoid"] * 2, [1.0] + [0.0] * 15,),
+        ([3, 3, 3, 3], ["relu", "relu", "softmax"], [0]),
+        ([18, 9, 3], ["relu"] * 2, [1.0] + [0.0] * 2,),
+        ([9, 18, 9], ["relu", "tanh"], [1.0] + [0.0] * 8,),
     ])
-    def test_train(self, layer_sizes: list[int], algos: list[str]):
+    def test_train(self, layer_sizes: list[int], algos: list[str], sample_target: list[float]):
         model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
-        sample_input = vector([0.5] * layer_sizes[0])
-        sample_target = Tensor([1.0] + [0.0] * (layer_sizes[-1] - 1)).double()
+        sample_input = [0.5] * layer_sizes[0]
 
-        initial_weights = [[n.weights.tolist() for n in l.neurons] for l in model.layers]
-        initial_biases = [[n.bias.item() for n in l.neurons] for l in model.layers]
+        initial_weights = [l.weights.tolist() for l in model.layers]
+        initial_biases = [l.biases.tolist() for l in model.layers]
         _, initial_cost = model.compute_output(sample_input, sample_target)
         # Add enough data to meet the training buffer size
         training_data = [(sample_input, sample_target)] * model.training_buffer_size
 
         model.train(training_data, epochs=1)
 
-        updated_weights = [[n.weights.tolist() for n in l.neurons] for l in model.layers]
-        updated_biases = [[n.bias.item() for n in l.neurons] for l in model.layers]
+        updated_weights = [l.weights.tolist() for l in model.layers]
+        updated_biases = [l.biases.tolist() for l in model.layers]
 
         # Check that the model data is still valid
-        self.assertEqual(len(initial_weights), len(updated_weights))
-        self.assertEqual(len(initial_weights[0]), len(updated_weights[0]))
-        self.assertEqual(len(initial_weights[0][0]), len(updated_weights[0][0]))
-        self.assertEqual(len(initial_biases), len(updated_biases))
-        self.assertEqual(len(initial_biases[0]), len(updated_biases[0]))
+        for a, e in zip(updated_weights, initial_weights):
+            np.testing.assert_array_almost_equal(a, e, 1)
+        for a, e in zip(updated_biases, initial_biases):
+            np.testing.assert_array_almost_equal(a, e, 1)
 
         # Ensure training progress
         self.assertGreater(len(model.progress), 0)
@@ -129,22 +120,13 @@ class TestNeuralNetModel(unittest.TestCase):
         persisted_model = NeuralNetworkModel.deserialize(model.model_id)
 
         # Verify model parameters correctly deserialized
-        for i in range(len(layer_sizes) - 1):
-            self.assertEqual(layer_sizes[i], len(persisted_model.layers[i].neurons[0].weights.tolist()))
-            self.assertEqual(layer_sizes[i + 1], len(persisted_model.layers[i].neurons))
+        persisted_weights = [l.weights.tolist() for l in persisted_model.layers]
+        persisted_biases = [l.biases.tolist() for l in persisted_model.layers]
 
-        persisted_weights = [[n.weights.tolist() for n in l.neurons] for l in persisted_model.layers]
-        persisted_biases = [[n.bias.item() for n in l.neurons] for l in persisted_model.layers]
-
-        self.assertEqual(len(updated_weights), len(persisted_weights))
-        for i, (uwl, pwl) in enumerate(zip(updated_weights, persisted_weights)):
-            for j, (uwv, pwv) in enumerate(zip(uwl, pwl)):
-                for k, (uw, pw) in enumerate(zip(uwv, pwv)):
-                    self.assertAlmostEqual(uw, pw, 4, f"Element at loc {i},{j},{k}")
-        self.assertEqual(len(updated_biases), len(persisted_biases))
-        for i, (ubl, pbl) in enumerate(zip(updated_biases, persisted_biases)):
-            for j, (ub, pb) in enumerate(zip(ubl, pbl)):
-                self.assertAlmostEqual(ub, pb, 4, f"Element at loc {i}, {j}")
+        for a, e in zip(persisted_weights, updated_weights):
+            np.testing.assert_array_almost_equal(a, e, 8)
+        for a, e in zip(persisted_biases, updated_biases):
+            np.testing.assert_array_almost_equal(a, e, 8)
         self.assertEqual(len(persisted_model.progress), len(model.progress))
         self.assertEqual(len(persisted_model.training_data_buffer), 0)
         self.assertEqual(persisted_model.avg_cost, model.avg_cost)
@@ -156,8 +138,8 @@ class TestNeuralNetModel(unittest.TestCase):
         input_size = 9
         output_size = 9
 
-        sample_input = vector([0.5] * input_size)  # Example input as a list of numbers
-        sample_target = vector([1.0] * output_size)  # Example target as a list of numbers
+        sample_input = [0.5] * input_size  # Example input as a list of numbers
+        sample_target = [1.0] * output_size  # Example target as a list of numbers
 
         # Add insufficient data
         training_data = [(sample_input, sample_target)] * (model.training_buffer_size - 1)
@@ -179,8 +161,8 @@ class TestNeuralNetModel(unittest.TestCase):
         input_size = 9
         output_size = 9
 
-        sample_input = vector([0.5] * input_size)
-        sample_target = vector([1.0] * output_size)
+        sample_input = [0.5] * input_size
+        sample_target = [1.0] * output_size
 
         # Add enough data to meet the training buffer size
         training_data = [(sample_input, sample_target)] * model.training_buffer_size
