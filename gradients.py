@@ -2,26 +2,25 @@ from __future__ import annotations
 from torch import Tensor
 import torch
 import torch.nn as nn
-import functions as func
+
+def matrix(values: list[list[float]]) -> Tensor:
+    """
+    :param values: nested list of floats
+    :return: a 2D Tensor of type double requiring gradient
+    """
+    return torch.tensor(values, dtype=torch.float64, requires_grad=True)
 
 def vector(values: list[float]) -> Tensor:
     """
     :param values: list of floats
-    :return: a 1D Tensor of type double requiring gradient
+    :return: a 2D Tensor as column vector of type double requiring gradient
     """
-    return torch.tensor(values, dtype=torch.float64, requires_grad=True)
-
-def scalar(value: float) -> Tensor:
-    """
-    :param value: a float
-    :return: a scalar Tensor of type double requiring gradient
-    """
-    return torch.tensor(value, dtype=torch.float64, requires_grad=True)
+    return matrix([values])
 
 def activate(tensor: Tensor, algo: str) -> Tensor:
     """
     Apply activation function based on the given algorithm.
-    :param tensor: a Tensor to activate
+    :param tensor: a 1D or 2D Tensor to activate
     :param algo: The activation algorithm ("sigmoid", "relu", "tanh", "softmax").
     :return: Activated tensor.
     """
@@ -31,59 +30,24 @@ def activate(tensor: Tensor, algo: str) -> Tensor:
         return tensor.relu()
     elif algo == "tanh":
         return tensor.tanh()
+    elif algo == "softmax" and tensor.dim() == 2:
+        return tensor.softmax(dim=1)
+    raise ValueError(f"Unsupported activation algorithm: {algo}")
+
+def calculate_cost(algo: str, logits: Tensor, activation: Tensor, target: list[list[float]]):
+    """
+    Calculates lost based on activation algorithm given
+    :param algo: The activation algorithm ("sigmoid", "relu", "tanh", "softmax").
+    :param logits: pre-activation tensor before softmax activation
+    :param activation: activated tensor
+    :param target: target to compare with (same shape as activation or label index for softmax)
+    :return: calculated cost
+    """
+    if target is None or any(tgt is None for tgt in target):
+        return torch.empty(0)
     elif algo == "softmax":
-        return tensor.softmax(dim=0)
+        label_tensor = torch.tensor([tgt[0] for tgt in target], dtype=torch.int64)
+        return nn.functional.cross_entropy(logits, label_tensor)
     else:
-        raise ValueError(f"Unsupported activation algorithm: {algo}")
-
-class Activation:
-    def __init__(self, tensor: Tensor):
-        self.tensor = tensor
-
-    def activate(self, algo: str):
-        """
-        Activates vector
-        :param algo: The activation algorithm ("softmax").
-        :return: activated vector
-        """
-        if algo == "softmax":
-            return SoftmaxActivation(self.tensor)
-        else:
-            return Activation(activate(self.tensor, algo))
-
-    def batch_norm(self) -> Activation:
-        """
-        Applies batch normalization to the values of this vector
-        """
-        return Activation(func.batch_norm(self.tensor))
-
-    def apply_dropout(self, rate: float) -> Activation:
-        """
-        Drops out values of this vector by given rate
-        :param rate: drop out rate
-        """
-        return Activation(nn.functional.dropout(self.tensor, p=rate))
-
-    def calculate_cost(self, target: Tensor) -> Tensor:
-        """
-        Calculates cost between this vector and target
-        :param target: a vector
-        :return: cost between this and target
-        """
-        return nn.functional.mse_loss(self.tensor, target)
-
-class SoftmaxActivation(Activation):
-    def __init__(self, pre_activation: Tensor):
-        """
-        Initializes a softmax activation vector for given values
-        :param pre_activation: tensor to be activated
-        """
-        super().__init__(pre_activation.softmax(dim=0))
-
-    def calculate_cost(self, target: Tensor) -> Tensor:
-        """
-        Calculates cross entropy cost between this vector and target
-        :param target: vector
-        :return: cost between this and target
-        """
-        return func.cross_entropy_loss(self.tensor, target)
+        target_tensor = torch.tensor(target, dtype=torch.float64)
+        return nn.functional.mse_loss(activation, target_tensor)

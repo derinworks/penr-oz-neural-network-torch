@@ -7,37 +7,13 @@ from typing import Tuple
 import time
 from datetime import datetime as dt
 import torch
+import torch.nn as nn
 from torch import Tensor
-from gradients import scalar, vector, Activation
+import functions as func
+from gradients import matrix, vector, activate, calculate_cost
 
 
 log = logging.getLogger(__name__)
-
-class Neuron:
-    def __init__(self, input_size: int = 0, weight_algo="xavier", bias_algo="random", activation_algo="relu"):
-        """
-        Initialize a neuron
-        :param input_size: represents the input size of neuron
-        :param weight_algo: Initialization algorithm for weights (default: "xavier").
-        :param bias_algo: Initialization algorithm for bias (default: "random")
-        :param activation_algo: Activation algorithm (default: "relu")
-        """
-        self.weights = vector([
-            random.uniform(-math.sqrt(1 / input_size), math.sqrt(1 / input_size)) if weight_algo == "xavier"
-            else random.uniform(-math.sqrt(2 / input_size), math.sqrt(2 / input_size)) if weight_algo == "he"
-            else random.uniform(-1, 1) # gaussian
-            for _ in range(input_size)
-        ])
-        self.bias = scalar(0) if bias_algo == "zeros" else scalar(random.uniform(-1, 1))
-        self.activation_algo = activation_algo
-
-    def output(self, input_vector: Tensor) -> Tensor:
-        """
-        Gives output of this neuron pre-activation for given input.
-        :param input_vector: an input vector
-        :return: output
-        """
-        return (self.weights @ input_vector) + self.bias
 
 class Layer:
     def __init__(self, input_size: int = 0, output_size: int = 0, weight_algo="xavier", bias_algo="random", activation_algo="relu"):
@@ -49,17 +25,25 @@ class Layer:
         :param bias_algo: Initialization algorithm for bias (default: "random")
         :param activation_algo: Activation algorithm (default: "relu")
         """
-        self.neurons = [Neuron(input_size, weight_algo, bias_algo, activation_algo)
-                        for _ in range(output_size)]
+        self.weights = matrix([[
+            random.uniform(-math.sqrt(1 / input_size), math.sqrt(1 / input_size)) if weight_algo == "xavier"
+            else random.uniform(-math.sqrt(2 / input_size), math.sqrt(2 / input_size)) if weight_algo == "he"
+            else random.uniform(-1, 1) # gaussian
+            for _ in range(output_size)
+        ] for _ in range(input_size)])
+        self.biases = vector([
+            0 if bias_algo == "zeros" else random.uniform(-1, 1)
+            for _ in range(output_size)
+        ])
         self.activation_algo = activation_algo
 
-    def output(self, input_vector: Tensor) -> Activation:
+    def output(self, input_tensor: Tensor) -> Tensor:
         """
         Gives output of this layer of neurons pre-activation for given input
-        :param input_vector: an input vector
-        :return: output vector pre-activation
+        :param input_tensor: an input tensor
+        :return: pre-activation
         """
-        return Activation(torch.stack([neuron.output(input_vector) for neuron in self.neurons]))
+        return input_tensor @ self.weights + self.biases
 
 class MultiLayerPerceptron:
     def __init__(self, layer_sizes: list[int],
@@ -95,7 +79,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.model_id = model_id
         self.optimizer = torch.optim.Adam(self.params) if len(self.params) > 0 else None
         self.progress = []
-        self.training_data_buffer: list[Tuple[Tensor, Tensor]] = []
+        self.training_data_buffer: list[Tuple] = []
         self.training_buffer_size: int = self.num_params
         self.avg_cost = None
 
@@ -104,14 +88,14 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         """
         :return: Model weights
         """
-        return [n.weights for l in self.layers for n in l.neurons]
+        return [l.weights for l in self.layers]
 
     @property
     def params(self) -> list[Tensor]:
         """
         :return: Model parameters
         """
-        return self.weights + [n.bias for l in self.layers for n in l.neurons]
+        return self.weights + [l.biases for l in self.layers]
 
     @property
     def num_params(self) -> int:
@@ -124,13 +108,11 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         return {
             "layers": [{
                 "algo": l.activation_algo,
-                "neurons": [{
-                    "weights": [w.tolist() for w in n.weights],
-                    "bias": n.bias.item()
-                } for n in l.neurons]
+                "weights": l.weights.tolist(),
+                "biases": l.biases.squeeze(0).tolist(),
             } for l in self.layers],
             "progress": self.progress,
-            "training_data_buffer": [tuple(tv.tolist() for tv in ttv) for ttv in self.training_data_buffer],
+            "training_data_buffer": self.training_data_buffer,
             "average_cost": self.avg_cost,
         }
 
@@ -138,15 +120,12 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         for layer_state in model_data["layers"]:
             layer = Layer(activation_algo=layer_state["algo"])
             self.layers.append(layer)
-            for neuron_state in layer_state["neurons"]:
-                neuron = Neuron(activation_algo=layer_state["algo"])
-                layer.neurons.append(neuron)
-                neuron.weights = vector([w for w in neuron_state["weights"]])
-                neuron.bias = scalar(neuron_state["bias"])
+            layer.weights = matrix(layer_state["weights"])
+            layer.biases = vector(layer_state["biases"])
 
         self.optimizer = torch.optim.Adam(self.params)
         self.progress = model_data["progress"]
-        self.training_data_buffer = [tuple(vector(t) for t in tt) for tt in model_data["training_data_buffer"]]
+        self.training_data_buffer = model_data["training_data_buffer"]
         self.training_buffer_size = self.num_params
         self.avg_cost = model_data["average_cost"]
 
@@ -186,38 +165,49 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         except FileNotFoundError as e:
             log.warning(f"Failed to delete: {str(e)}")
 
-    def compute_output(self, input_vector: Tensor, target: Tensor = None, dropout_rate=0.0) -> Tuple[Activation, Tensor]:
+    def compute_output(self, input_vector: list[float], target: list[float] = None) -> Tuple[list[float], float]:
         """
         Compute activated output and optionally also cost compared to the provided target vector.
         :param input_vector: Input vector
         :param target: Target vector (optional)
-        :param dropout_rate: Fraction of neurons to drop during training for hidden layers (optional)
-        :return: activation tensor, cost, gradients
+        :return: activation, cost (optional)
         """
-        activation = Activation(input_vector)
-        num_layers = len(self.layers)
-        for l in range(num_layers):
-            algo = self.layers[l].activation_algo
-            pre_activation: Activation = self.layers[l].output(activation.tensor)
-            if algo == "relu" and l < num_layers - 1:
-                # stabilize output in hidden layers prevent overflow with ReLU activations
-                pre_activation.batch_norm()
-            activation = pre_activation.activate(algo)
-            if l < num_layers - 1:  # Hidden layers only
-                # Apply dropout only to hidden layers
-                activation.apply_dropout(dropout_rate)
+        # input 2D tensor shape 1 by input size column vector
+        input_tensor = torch.tensor([input_vector], dtype=torch.float64)
+        # forward pass
+        activation, cost = self._forward(input_tensor, [target])
+        # convert output back to 1D to get same shape list out
+        activation = activation.squeeze(0).tolist()
+        # if target specified, then get float out, otherwise no cost
+        cost = cost.item() if cost.numel() > 0 else None
+        # activation same shape and a float cost is returned
+        return activation, cost
 
-        cost = torch.empty(0)
-        if target is not None:
-            cost = activation.calculate_cost(target)
+    def _forward(self, input_tensor: Tensor, target: list[list[float]], dropout_rate=0.0) -> Tuple[Tensor, Tensor]:
+        pre_activation = input_tensor
+        activation = input_tensor
+        num_layers = len(self.layers)
+        for i, layer in enumerate(self.layers):
+            pre_activation = layer.output(activation)
+            algo = layer.activation_algo
+            hidden = (0 < i < num_layers - 1)
+            if hidden and algo == "relu":
+                # stabilize output in hidden layers prevent overflow with ReLU activations
+                pre_activation = func.batch_norm(pre_activation)
+            activation = activate(pre_activation, algo)
+            if hidden and target is not None:
+                # Apply dropout only to hidden layers during training
+                activation = nn.functional.dropout(activation, p=dropout_rate)
+
+        cost = calculate_cost(self.layers[-1].activation_algo, pre_activation, activation, target)
 
         return activation, cost
 
-    def train(self, training_data: list[Tuple[Tensor, Tensor]], epochs=100, learning_rate=0.01, decay_rate=0.9,
+    def train(self, training_data: list[Tuple[list[float], list[float]]], epochs=100, learning_rate=0.01, decay_rate=0.9,
               dropout_rate=0.2, l2_lambda=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
         Train the neural network using the provided training data.
-        :param training_data: List of tuples [(input_vector, target_vector), ...].
+        :param training_data: list of tuples of input and target
         :param epochs: Number of training iterations.
         :param learning_rate: Learning rate for gradient descent.
         :param decay_rate: Decay rate of learning rate for finer gradient descent
@@ -239,7 +229,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             return
 
         # Calculate sample size
-        training_sample_size = int(self.training_buffer_size * 0.1)  # sample 10% of buffer
+        training_sample_size = int(len(training_data) / epochs)  # sample equally per epoch
 
         # Proceed with training using combined data if buffer size is sufficient
         training_data = self.training_data_buffer
@@ -254,7 +244,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         last_serialized = time.time()
         for epoch in range(epochs):
             random.shuffle(training_data)
-            training_data_sample = training_data[:training_sample_size]
+            training_sample = training_data[:training_sample_size]
 
             # decay learning rate
             current_learning_rate = learning_rate * (decay_rate ** epoch)
@@ -263,25 +253,23 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             for param_group in self.optimizer.param_groups:
                 param_group["lr"] = current_learning_rate
 
-            # calculate costs
-            costs: list[Tensor] = []
-            for input_vector, target_vector in training_data_sample:
-                _, cost = self.compute_output(input_vector, target_vector, dropout_rate)
-                costs.append(cost)
-            # average cost
-            avg_cost = torch.stack(costs).mean()
+            # organize training data for forward pass
+            input_tensor = torch.tensor([inpt for inpt, _ in training_sample], dtype=torch.float64)
+            target = [tgt for _, tgt in training_sample]
+            # calculate cost
+            _, cost = self._forward(input_tensor, target, dropout_rate)
             # apply L2 regularization, if any
             if l2_lambda > 0.0:
-                avg_cost += l2_lambda * sum((w ** 2).sum() for w in self.weights)
+                cost += l2_lambda * sum((w ** 2).sum() for w in self.weights)
             # zero out gradients
             self.optimizer.zero_grad()
             # back propagate to populate gradients
-            avg_cost.backward()
+            cost.backward()
             # apply optimizer gradient descent
             self.optimizer.step()
 
             # Record progress
-            progress_dt, progress_cost = dt.now().isoformat(), avg_cost.item()
+            progress_dt, progress_cost = dt.now().isoformat(), cost.item()
             self.progress.append({
                 "dt": progress_dt,
                 "epoch": epoch + 1,
