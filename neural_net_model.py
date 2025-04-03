@@ -10,67 +10,130 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import functions as func
-from gradients import matrix, vector, activate, calculate_cost
 
 
 log = logging.getLogger(__name__)
 
 class Layer:
-    def __init__(self, input_size: int = 0, output_size: int = 0, weight_algo="xavier", bias_algo="random", activation_algo="relu"):
+    def __init__(self, input_size: int = 0, output_size: int = 0, weight_algo="xavier", bias_algo="zeros"):
         """
         Initialize a layer of neurons
         :param input_size: represents the input size of layer
         :param output_size: represents the output size of layer
         :param weight_algo: Initialization algorithm for weights (default: "xavier").
-        :param bias_algo: Initialization algorithm for bias (default: "random")
-        :param activation_algo: Activation algorithm (default: "relu")
         """
-        self.weights = matrix([[
-            random.uniform(-math.sqrt(1 / input_size), math.sqrt(1 / input_size)) if weight_algo == "xavier"
-            else random.uniform(-math.sqrt(2 / input_size), math.sqrt(2 / input_size)) if weight_algo == "he"
-            else random.uniform(-1, 1) # gaussian
-            for _ in range(output_size)
-        ] for _ in range(input_size)])
-        self.biases = vector([
-            0 if bias_algo == "zeros" else random.uniform(-1, 1)
-            for _ in range(output_size)
-        ])
-        self.activation_algo = activation_algo
+        self.weights: Tensor = (torch.randn(input_size, output_size) * (
+            math.sqrt(1 / input_size) if weight_algo == "xavier"
+            else math.sqrt(2 / input_size) if weight_algo == "he"
+            else 1 # if weight_algo == gaussian
+        )).double().requires_grad_() if all(sz > 0 for sz in (input_size, output_size)) else torch.empty(0)
+        self.biases: Tensor = (torch.zeros(output_size) if bias_algo == "zeros"
+                       else torch.randn(output_size) # if bias_algo == "random"
+        ).double().requires_grad_() if output_size > 0 else torch.empty(0)
+        self.hidden = False
 
-    def output(self, input_tensor: Tensor) -> Tensor:
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]: # pragma: no cover
         """
-        Gives output of this layer of neurons pre-activation for given input
         :param input_tensor: an input tensor (1D vector or 2D batch matrix both supported)
-        :return: pre-activation (shape corresponding to input)
+        :return: a forwarded tuple of pre-activation and activated tensors (shape corresponding to input)
         """
+        pass
+
+class EmbeddingLayer(Layer):
+    def __init__(self, input_size: int, output_size: int, weight_algo: str, _bias_algo):
+        """
+        Initialize a layer of neurons that input can be embedded into
+        :param _bias_algo: ignored (always zeros)
+        """
+        super().__init__(input_size, output_size, weight_algo, "zeros")
+
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]:
+        embedded = self.weights[input_tensor.long()]
+        return embedded, embedded
+
+class ActivationLayer(Layer):
+    def __init__(self, input_size: int, output_size: int, weight_algo: str, bias_algo="random"):
+        """
+        Initialize a layer of neurons that can be activated
+        :param bias_algo: Initialization algorithm for bias (default: "random")
+        """
+        super().__init__(input_size, output_size, weight_algo, bias_algo)
+
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]:
+        # if input is 3D (coming from embedding), then concatenated view is needed which can be achieved
+        # by (-1, input_size of weights)
+        # check if last two dimensions of the input can be viewed as input dimension of weights, if needed
+        weight_input_size = self.weights.size(0)
+        if input_tensor.dim() == 2 and input_tensor.numel() == weight_input_size:
+            input_view = input_tensor.view(-1)
+        elif input_tensor.dim() >= 2 and math.prod(input_tensor.shape[-2:]) == weight_input_size:
+            input_view = input_tensor.view(-1, weight_input_size)
+        else:
+            input_view = input_tensor
         # PyTorch internally treats 1D vector of shape (input_size, ) as (1, input_size)
         # to achieve dot product of (1, input_size) x (input_size, output_size) = (1, output_size)
         # then automatically squeezes it to (output_size,) which matches biases shape (output_size,)
         # on flip side for batch 2D vectors of shape (batch_size, input_size) dot product result is
         # of shape (batch_size, output_size) then biases are automatically un-squeezed to shape
         # (batch_size, output_size) to repeatedly added for an output of shape (batch_size, output_size)
-        return input_tensor @ self.weights + self.biases
+        forwarded = input_view @ self.weights + self.biases
+        return forwarded, forwarded
+
+class SigmoidLayer(ActivationLayer):
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]:
+        pre_activation, _ = super().forward(input_tensor)
+        return pre_activation, pre_activation.sigmoid()
+
+class ReluLayer(ActivationLayer):
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]:
+        pre_activation, _ = super().forward(input_tensor)
+        if self.hidden:
+            # stabilize output in hidden layers prevent overflow with ReLU activations
+            pre_activation = func.batch_norm(pre_activation)
+        return pre_activation, pre_activation.relu()
+
+class TanhLayer(ActivationLayer):
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]:
+        pre_activation, _ = super().forward(input_tensor)
+        return pre_activation, pre_activation.tanh()
+
+class SoftmaxLayer(ActivationLayer):
+    def forward(self, input_tensor: Tensor) -> Tuple[Tensor, Tensor]:
+        logits, _ = super().forward(input_tensor)
+        return logits, logits.softmax(dim=logits.ndim - 1)
 
 class MultiLayerPerceptron:
-    def __init__(self, layer_sizes: list[int],
-                 weight_algo: str = "xavier",
-                 bias_algo: str = "random",
-                 activation_algos: list[str] = None):
+    _layer_map: dict[str, type(ActivationLayer)] = {
+        "embedding": EmbeddingLayer,
+        "relu": ReluLayer,
+        "sigmoid": SigmoidLayer,
+        "softmax": SoftmaxLayer,
+        "tanh": TanhLayer,
+    }
+
+    def __init__(self, layer_sizes: list[int], weight_algo: str = "xavier", bias_algo: str = "random",
+                 forward_algos: list[str] = None):
         """
         Initialize a multi-layer perceptron
         :param layer_sizes: List of integers where each integer represents the input size of the corresponding layer
         and the output size of the next layer.
         :param weight_algo: Initialization algorithm for weights (default: "xavier").
         :param bias_algo: Initialization algorithm for biases (default: "random")
-        :param activation_algos: Activation algorithms per layer (default: "relu")
+        :param forward_algos: Forwarding algorithms per layer (default: "relu")
         """
-        input_sizes = layer_sizes[:-1]
-        output_sizes = layer_sizes[1:]
-        if activation_algos is None:
-            activation_algos = ["relu"] * len(input_sizes)
-        self.layers = [Layer(input_size, output_size, weight_algo, bias_algo, activation_algo)
-                       for input_size, output_size, activation_algo in
-                       zip(input_sizes, output_sizes, activation_algos)]
+        self.algos = forward_algos or ["relu"] * (len(layer_sizes) - 1)
+        self.layers: list[Layer] = []
+        size_idx = 0
+        for algo in self.algos:
+            in_sz = layer_sizes[size_idx] if size_idx < len(layer_sizes) else 0
+            out_sz = layer_sizes[size_idx + 1] if size_idx < len(layer_sizes) -1 else 0
+            if algo not in self._layer_map.keys():
+                raise ValueError(f"Unsupported activation algorithm: {algo}")
+            self.layers.append(self._layer_map.get(algo)(in_sz, out_sz, weight_algo, bias_algo))
+            size_idx += 2 if algo == "embedding" else 1
+        for i, layer in enumerate(self.layers):
+            layer.hidden = (0 < i < len(self.layers) - 1)
+
 
 class NeuralNetworkModel(MultiLayerPerceptron):
     def __init__(self, model_id, layer_sizes: list[int], weight_algo="xavier", bias_algo="random", activation_algos=None):
@@ -79,7 +142,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         :param layer_sizes: List of integers where each integer represents the size of a layer.
         :param weight_algo: Initialization algorithm for weights (default: "xavier").
         :param bias_algo: Initialization algorithm for biases (default: "random")
-        :param activation_algos: Activation algorithms (default: "sigmoid")
+        :param activation_algos: Activation algorithms (default: "relu")
         """
         super().__init__(layer_sizes, weight_algo, bias_algo, activation_algos)
         self.model_id = model_id
@@ -112,8 +175,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
     def get_model_data(self) -> dict:
         return {
+            "algos": self.algos,
             "layers": [{
-                "algo": l.activation_algo,
                 "weights": l.weights.tolist(),
                 "biases": l.biases.tolist(),
             } for l in self.layers],
@@ -123,11 +186,9 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         }
 
     def set_model_data(self, model_data: dict):
-        for layer_state in model_data["layers"]:
-            layer = Layer(activation_algo=layer_state["algo"])
-            self.layers.append(layer)
-            layer.weights = matrix(layer_state["weights"])
-            layer.biases = vector(layer_state["biases"])
+        for layer, layer_state in zip(self.layers, model_data["layers"]):
+            layer.weights = torch.tensor(layer_state["weights"], dtype=torch.float64, requires_grad=True)
+            layer.biases = torch.tensor(layer_state["biases"], dtype=torch.float64, requires_grad=True)
 
         self.optimizer = torch.optim.Adam(self.params)
         self.progress = model_data["progress"]
@@ -152,7 +213,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             model_path = os.path.join("models", f"model_{model_id}.json")
             with open(model_path, 'r', encoding='utf-8') as f:
                 model_data = json.load(f)
-            model = cls(model_id, [])
+            model = cls(model_id, [], activation_algos=model_data["algos"])
             model.set_model_data(model_data)
             optimizer_path = os.path.join("models", f"optimizer_{model_id}.pth")
             model.optimizer.load_state_dict(torch.load(optimizer_path))
@@ -178,34 +239,30 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         :param target: Target vector (optional)
         :return: activation, cost (optional)
         """
-        # input 2D tensor shape 1 by input size column vector
-        input_tensor = torch.tensor(input_vector, dtype=torch.float64)
         # forward pass
+        input_tensor = torch.tensor(input_vector, dtype=torch.float64)
         activation, cost = self._forward(input_tensor, target)
-        # convert output back to 1D to get same shape list out
-        activation = activation.tolist()
-        # if target specified, then get float out, otherwise no cost
-        cost = cost.item() if cost.numel() > 0 else None
-        # activation same shape and a float cost is returned
-        return activation, cost
+        # activation same shape list and a float cost is returned, if any
+        return activation.tolist(), cost.item() if cost.numel() > 0 else None
 
     def _forward(self, input_tensor: Tensor, target: list, dropout_rate=0.0) -> Tuple[Tensor, Tensor]:
-        pre_activation = input_tensor
         activation = input_tensor
-        num_layers = len(self.layers)
-        for i, layer in enumerate(self.layers):
-            pre_activation = layer.output(activation)
-            algo = layer.activation_algo
-            hidden = (0 < i < num_layers - 1)
-            if hidden and algo == "relu":
-                # stabilize output in hidden layers prevent overflow with ReLU activations
-                pre_activation = func.batch_norm(pre_activation)
-            activation = activate(pre_activation, algo)
-            if hidden and target is not None:
+        logits = None
+        for layer in self.layers:
+            logits, activation = layer.forward(activation)
+            if layer.hidden and target is None:
                 # Apply dropout only to hidden layers during training
                 activation = nn.functional.dropout(activation, p=dropout_rate)
 
-        cost = calculate_cost(self.layers[-1].activation_algo, pre_activation, activation, target)
+        if target is None or any(tgt is None for tgt in target):
+            cost = torch.empty(0)
+        elif self.algos[-1] == "softmax":
+            label_data = target[0] if logits.ndim == 1 else [tgt[0] for tgt in target]
+            label_tensor = torch.tensor(label_data, dtype=torch.int64)
+            cost = nn.functional.cross_entropy(logits, label_tensor)
+        else:
+            target_tensor = torch.tensor(target, dtype=torch.float64)
+            cost = nn.functional.mse_loss(activation, target_tensor)
 
         return activation, cost
 
@@ -285,7 +342,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
             # Serialize model after 10 secs while training
             if time.time() - last_serialized >= 10:
-                self.serialize()
+                self.serialize() # pragma: no cover
 
         # Calculate current average progress cost
         avg_progress_cost = sum([progress["cost"] for progress in self.progress]) / len(self.progress)

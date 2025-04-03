@@ -92,7 +92,7 @@ class ModelRequest(BaseModel):
 class CreateModelRequest(ModelRequest):
     layer_sizes: list[int] = Field(
         ...,
-        examples=[[9, 9, 9]],
+        examples=[[9, 1, 9, 9]],
         description="A list of integers representing the sizes of each layer in the neural network."
     )
     weight_algo: str = Field(
@@ -107,7 +107,7 @@ class CreateModelRequest(ModelRequest):
     )
     activation_algos: list[str] = Field(
         ...,
-        examples=[["sigmoid"] * 2, ["relu"] * 2, ["tanh"] * 2, ["relu", "softmax"]],
+        examples=[["sigmoid"] * 3, ["relu"] * 2 + ["sigmoid"], ["relu"] * 2 + ["softmax"], ["embedding", "tanh"]],
         description="The activation algorithms to apply"
     )
 
@@ -247,7 +247,7 @@ def delete_model(model_id: str = ModelIdQuery(...)):
     return Response(status_code=204)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": # pragma: no cover
     import uvicorn
 
     uvicorn.run(app,
