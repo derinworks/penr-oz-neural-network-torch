@@ -14,6 +14,7 @@ from torch import Tensor
 log = logging.getLogger(__name__)
 
 class Layer:
+    algo = ""
     def __init__(self):
         self.hidden = False
         self.training = False
@@ -39,6 +40,7 @@ class Layer:
         return input_tensor
 
 class EmbeddingLayer(Layer):
+    algo = "embedding"
     def __init__(self, vocab_size: int = 0, embedding_size: int = 0):
         """
         Initialize a layer of neurons
@@ -64,6 +66,7 @@ class EmbeddingLayer(Layer):
         return self.weights[input_tensor.long()]
 
 class LinearLayer(Layer):
+    algo = "linear"
     def __init__(self, input_size: int = 0, output_size: int = 0, bias_algo="zeros"):
         """
         Initialize a layer of neurons
@@ -110,6 +113,7 @@ class LinearLayer(Layer):
         return input_view @ self.weights + self.bias
 
 class BatchNormLayer(Layer):
+    algo = "batchnorm"
     def __init__(self, dim_size: int):
         super().__init__()
         self.gain = torch.ones(dim_size, dtype=torch.float64)
@@ -145,17 +149,21 @@ class BatchNormLayer(Layer):
         return self.gain * (input_tensor - mean) / torch.sqrt(variance + 1e-5) + self.bias
 
 class SigmoidLayer(Layer):
+    algo = "sigmoid"
     def forward(self, pre_activation: Tensor) -> Tensor: return pre_activation.sigmoid()
 
 class ReluLayer(Layer):
+    algo = "relu"
     weight_gain = math.sqrt(2.0)
     def forward(self, pre_activation: Tensor) -> Tensor: return pre_activation.relu()
 
 class TanhLayer(Layer):
+    algo = "tanh"
     weight_gain = 5.0 / 3.0
     def forward(self, pre_activation: Tensor) -> Tensor: return pre_activation.tanh()
 
 class SoftmaxLayer(Layer):
+    algo = "softmax"
     def forward(self, logits: Tensor) -> Tensor: return logits.softmax(dim=logits.ndim - 1)
 
 class MultiLayerPerceptron:
@@ -252,13 +260,14 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_data_buffer: list[Tuple] = []
         self.training_buffer_size: int = self.num_params
         self.avg_cost = None
+        self.stats = None
 
     @property
     def weights(self) -> list[Tensor]:
         """
         :return: Model weights
         """
-        return [l.weights for l in self.layers]
+        return [l.weights for l in self.layers if l.weights.numel() > 0]
 
     @property
     def num_params(self) -> int:
@@ -276,6 +285,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             "progress": self.progress,
             "training_data_buffer": self.training_data_buffer,
             "average_cost": self.avg_cost,
+            "stats": self.stats
         }
 
     def set_model_data(self, model_data: dict):
@@ -286,6 +296,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_data_buffer = model_data["training_data_buffer"]
         self.training_buffer_size = self.num_params
         self.avg_cost = model_data["average_cost"]
+        self.stats = model_data["stats"]
 
     def serialize(self):
         os.makedirs("models", exist_ok=True)
@@ -336,21 +347,23 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         """
         # forward pass
         input_tensor = torch.tensor(input_vector, dtype=torch.float64)
-        activation, cost = self._forward(input_tensor, target)
-        # activation same shape list and a float cost is returned, if any
-        return activation.tolist(), cost.item() if cost.numel() > 0 else None
+        activations, cost = self._forward(input_tensor, target)
+        # last activation same shape list and a float cost is returned, if any
+        return activations[-1].tolist(), cost.item() if cost.numel() > 0 else None
 
-    def _forward(self, input_tensor: Tensor, target: list, dropout_rate=0.0) -> Tuple[Tensor, Tensor]:
+    def _forward(self, input_tensor: Tensor, target: list, dropout_rate=0.0) -> Tuple[list[Tensor], Tensor]:
         target_specified = target is not None and all(tgt is not None for tgt in target)
+        forwarded_tensors = []
         forwarded_tensor = input_tensor
         logits = input_tensor
         for layer in self.layers:
             layer.training = target_specified
             logits = forwarded_tensor
-            forwarded_tensor = layer.forward(forwarded_tensor)
+            forwarded_tensor = layer.forward(logits)
             if layer.hidden and layer.training:
                 # Apply dropout only to hidden layers during training
                 forwarded_tensor = nn.functional.dropout(forwarded_tensor, p=dropout_rate)
+            forwarded_tensors.append(forwarded_tensor)
 
         if not target_specified:
             cost = torch.empty(0)
@@ -362,7 +375,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             target_tensor = torch.tensor(target, dtype=torch.float64)
             cost = nn.functional.mse_loss(forwarded_tensor, target_tensor)
 
-        return forwarded_tensor, cost
+        return forwarded_tensors, cost
 
     def train(self, training_data: list[Tuple[list[float], list[float]]], epochs=100, learning_rate=0.01, decay_rate=0.9,
               dropout_rate=0.2, l2_lambda=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
@@ -403,6 +416,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                 param_group["eps"] = epsilon
 
         self.progress = []
+        activations = None
         last_serialized = time.time()
         for epoch in range(epochs):
             random.shuffle(training_data)
@@ -423,13 +437,17 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             for p in self.params:
                 p.requires_grad_()
             # calculate cost
-            _, cost = self._forward(input_tensor, target, dropout_rate)
+            activations, cost = self._forward(input_tensor, target, dropout_rate)
             # apply L2 regularization, if any
             if l2_lambda > 0.0:
                 cost += l2_lambda * sum((w ** 2).sum() for w in self.weights)
             # clear gradients
             for p in self.params:
                 p.grad = None
+            # on last epoch retain final activation gradients to collect stats
+            if epoch + 1 == epochs:
+                for a in activations:
+                    a.retain_grad()
             # back propagate to populate gradients
             cost.backward()
             if self.optimizer is not None: # apply optimizer gradient descent
@@ -443,7 +461,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             self.progress.append({
                 "dt": progress_dt,
                 "epoch": epoch + 1,
-                "cost": progress_cost
+                "cost": progress_cost,
             })
             print(f"Model {self.model_id}: {progress_dt} - Epoch {epoch + 1}, Cost: {progress_cost:.4f}")
 
@@ -459,6 +477,47 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         training_dt = dt.now().isoformat()
         print(f"Model {self.model_id}: {training_dt} - Done training for {epochs} epochs, "
               f"Cost: {avg_progress_cost:.4f} Overall Cost: {self.avg_cost:.4f}")
-
+        # Update stats
+        activation_hist = [torch.histogram(a, density=True) for a in activations]
+        activation_grad_hist = [None if a.grad is None else torch.histogram(a.grad, density=True)
+                                for a in activations]
+        weight_grad_hist = [torch.histogram(w.grad, density=True) for w in self.weights]
+        self.stats = {
+            "layers": [{
+                "algo": l.algo,
+                "activation": {
+                    "mean": a.mean().item(),
+                    "std": a.std().item(),
+                    "saturated": (a.abs() > 0.97).float().mean().item(),
+                    "histogram": {
+                        "x": ah.bin_edges[:-1].tolist(),
+                        "y": ah.hist.tolist()
+                    },
+                },
+                "gradient": {
+                    "mean": a.grad.mean().item(),
+                    "std": a.grad.std().item(),
+                    "histogram": {
+                        "x": agh.bin_edges[:-1].tolist(),
+                        "y": agh.hist.tolist()
+                    },
+                } if a.grad is not None else None,
+            } for l, a, ah, agh in zip(self.layers, activations, activation_hist, activation_grad_hist)],
+            "weights": [{
+                "shape": str(tuple(w.shape)),
+                "data": {
+                    "mean": w.mean().item(),
+                    "std": w.std().item(),
+                },
+                "gradient": {
+                    "mean": w.grad.mean().item(),
+                    "std": w.grad.std().item(),
+                    "histogram": {
+                        "x": wgh.bin_edges[:-1].tolist(),
+                        "y": wgh.hist.tolist()
+                    },
+                },
+            } for w, wgh in zip(self.weights, weight_grad_hist)],
+        }
         # Serialize model after training
         self.serialize()
