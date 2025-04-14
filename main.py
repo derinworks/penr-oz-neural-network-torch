@@ -110,6 +110,11 @@ class CreateModelRequest(ModelRequest):
         examples=[["sigmoid"] * 3, ["relu"] * 2 + ["sigmoid"], ["relu"] * 2 + ["softmax"], ["embedding", "tanh"]],
         description="The activation algorithms to apply"
     )
+    optimizer: str = Field(
+        "adam",
+        examples=["adam", "stochastic"],
+        description="The optimizer to use for updating for gradient descent"
+    )
 
 
 class ActivationRequest(ModelRequest):
@@ -192,7 +197,8 @@ def redirect_to_docs():
 
 @app.post("/model/")
 def create_model(body: CreateModelRequest = Body(...)):
-    model = NeuralNetworkModel(body.model_id, body.layer_sizes, body.weight_algo, body.bias_algo, body.activation_algos)
+    model = NeuralNetworkModel(body.model_id, body.layer_sizes, body.weight_algo, body.bias_algo, body.activation_algos,
+                               body.optimizer)
     model.serialize()
     return {"message": f"Model {body.model_id} created and saved successfully"}
 

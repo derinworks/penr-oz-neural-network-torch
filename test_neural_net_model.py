@@ -2,70 +2,119 @@ import unittest
 from parameterized import parameterized
 import numpy as np
 import torch
-from neural_net_model import NeuralNetworkModel, MultiLayerPerceptron, Layer, EmbeddingLayer
-
+from neural_net_model import (Layer,
+                              LinearLayer, EmbeddingLayer, BatchNormLayer,
+                              SigmoidLayer, SoftmaxLayer, ReluLayer, TanhLayer,
+                              NeuralNetworkModel, MultiLayerPerceptron)
 
 class TestNeuralNetModel(unittest.TestCase):
 
     @parameterized.expand([
-        (9, 9, "xavier", "random"),
-        (18, 9, "xavier", "zeros"),
-        (9, 3, "he", "zeros"),
-        (4, 4, "he", "random"),
-        (3, 9, "gaussian", "random"),
+        (True, True, [0.0] * 9,),
+        (True, False, [0.1] * 3,),
+        (False, True, [0.2] * 18,),
+        (False, False, [1.0],),
     ])
-    def test_layer_initialization(self, input_size: int, output_size: int, weight_algo: str, bias_algo: str):
-        layer = Layer(input_size, output_size, weight_algo, bias_algo)
+    def test_layer_initialization(self, hidden: bool, training: bool, input_vector: list[float]):
+        layer = Layer()
+        layer.hidden = hidden
+        layer.training = training
+        output = layer.forward(torch.tensor(input_vector).double())
 
-        self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
-        self.assertEqual((output_size,), tuple(layer.biases.shape))
+        self.assertEqual(hidden, layer.hidden)
+        self.assertEqual(training, layer.training)
+        np.testing.assert_array_almost_equal(input_vector, output.tolist(), 1)
 
     @parameterized.expand([
-        ("random",),
-        ("zeros",),
+        (9, 9, "random"),
+        (18, 9, "zeros"),
+        (9, 3, "zeros"),
+        (4, 4, "random"),
+        (3, 9, "random"),
     ])
-    def test_embedding_layer(self, bias_algo: str):
-        layer = EmbeddingLayer(27, 2, "gaussian", bias_algo)
-        _, single_embedded = layer.forward(torch.tensor([0.0, 5.0, 13.0]))
-        _, batch_embedded = layer.forward(torch.tensor([[0, 5, 13]] * 10))
+    def test_linear_layer_initialization(self, input_size: int, output_size: int, bias_algo: str):
+        layer = LinearLayer(input_size, output_size, bias_algo)
+        output = layer.forward(torch.tensor([0.0] * input_size).double())
+
+        self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
+        self.assertEqual((output_size,), tuple(layer.bias.shape))
+        self.assertEqual((output_size,), tuple(output.shape))
+
+    def test_embedding_layer(self):
+        layer = EmbeddingLayer(27, 2)
+        single_embedded = layer.forward(torch.tensor([0.0, 5.0, 13.0]))
+        batch_embedded = layer.forward(torch.tensor([[0, 5, 13]] * 10))
 
         self.assertEqual((27, 2), tuple(layer.weights.shape))
-        self.assertListEqual([0] * 2, layer.biases.tolist())
         self.assertEqual((3, 2), tuple(single_embedded.shape))
         self.assertEqual((10, 3, 2), tuple(batch_embedded.shape))
 
     @parameterized.expand([
-        ([9, 9, 9], "xavier", "random", None, [(9, 9)] * 2,),
-        ([18, 9, 3], "xavier", "zeros", ["relu", "softmax"], [(18, 9), (9, 3)],),
-        ([9, 18, 9], "he", "zeros", ["sigmoid"] * 2, [(9, 18), (18, 9)],),
-        ([4, 8, 16], "he", "random", ["tanh"] * 2, [(4, 8), (8, 16)]),
-        ([3, 3, 3, 3], "gaussian", "random", ["relu", "tanh", "softmax"], [(3, 3)] * 3,),
-        ([18, 2, 6, 20, 18], "gaussian", "random", ["embedding", "tanh", "softmax"], [(18, 2), (6, 20), (20, 18)],)
+        (False,),
+        (True,),
     ])
-    def test_multi_layer_perceptron_init(self, l_sizes: list[int], w_algo: str, b_algo: str, fwd_algos: list[str],
-                                         expected_layer_shapes: list[tuple]):
-        multi_layer_perceptron = MultiLayerPerceptron(l_sizes, w_algo, b_algo, fwd_algos)
+    def test_batchnorm_layer(self, training: bool):
+        layer = BatchNormLayer(9)
+        layer.training = training
+        normalized = layer.forward(torch.tensor([0.2] * 9))
 
-        self.assertEqual(len(multi_layer_perceptron.layers), len(expected_layer_shapes))
-        for (input_size, output_size), layer in zip(expected_layer_shapes, multi_layer_perceptron.layers):
-            self.assertEqual((input_size, output_size), tuple(layer.weights.shape))
-            self.assertEqual((output_size,), tuple(layer.biases.shape))
-        self.assertFalse(multi_layer_perceptron.layers[0].hidden)
-        for hidden_layer in multi_layer_perceptron.layers[1:-2]:
-            self.assertTrue(hidden_layer.hidden)
-        self.assertFalse(multi_layer_perceptron.layers[-1].hidden)
+        self.assertEqual((9,), tuple(layer.gain.shape))
+        self.assertEqual((9,), tuple(layer.bias.shape))
+        self.assertEqual((9,), tuple(layer.mean.shape))
+        self.assertEqual((9,), tuple(layer.variance.shape))
+        self.assertEqual((9,), tuple(normalized.shape))
 
     @parameterized.expand([
-        ([3, 3], None, 12,),
-        ([9, 9, 9], None, 180,),
-        ([18, 9, 3], ["sigmoid"] * 2, 201,),
-        ([10, 3, 6, 20, 10], ["embedding", "tanh", "softmax"], 383,),
+        ([9, 9, 9], "xavier", "random", None,
+         [LinearLayer, ReluLayer, LinearLayer, ReluLayer],
+         [[(9,9),(9,)],[],[(9,9),(9,)],[]],),
+        ([18, 9, 3], "xavier", "zeros", ["relu", "softmax"],
+         [LinearLayer, ReluLayer, LinearLayer, SoftmaxLayer],
+         [[(18,9),(9,)],[],[(9,3),(3,)],[]],),
+        ([9, 18, 9], "he", "zeros", ["sigmoid"] * 2,
+         [LinearLayer, SigmoidLayer, LinearLayer, SigmoidLayer],
+         [[(9,18),(18,)],[],[(18,9),(9,)],[]]),
+        ([4, 8, 16], "he", "random", ["tanh"] * 2,
+         [LinearLayer, TanhLayer, LinearLayer, TanhLayer],
+         [[(4,8),(8,)],[],[(8,16),(16,)],[]]),
+        ([3, 3, 3, 3], "he", "random", ["relu", "linear", "tanh", "softmax"],
+         [LinearLayer, ReluLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
+         [[(3,3),(3,)],[],[(3,3),(3,)],[],[(3,3),(3,)],[]],),
+        ([18, 2, 6, 20, 18], "gaussian", "random", ["embedding", "tanh", "linear", "softmax"],
+         [EmbeddingLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
+         [[(18,2)],[(6,20),(20,)],[],[(20,18),(18,)],[]],),
+        ([18, 2, 6, 20, 18], "he", "zeros", ["embedding", "linear", "batchnorm", "tanh", "softmax"],
+         [EmbeddingLayer, LinearLayer, BatchNormLayer, TanhLayer, LinearLayer, SoftmaxLayer],
+         [[(18, 2)], [(6, 20), (20,)], [(20,), (20,)], [], [(20, 18), (18,)], []],),
     ])
-    def test_model_initialization(self, layer_sizes: list[int], algos: list[str], expected_buffer_size: int):
+    def test_multi_layer_perceptron_init(self, l_sizes: list[int], w_algo: str, b_algo: str, fwd_algos: list[str],
+                                         expected_layers: list[str],
+                                         expected_layer_shapes: list[list[tuple]]):
+        mlp = MultiLayerPerceptron(l_sizes, w_algo, b_algo, fwd_algos)
+
+        self.assertListEqual(expected_layers, [l.__class__ for l in mlp.layers])
+        self.assertEqual(len(expected_layer_shapes), len(mlp.layers))
+        for expected_layer_shape, layer in zip(expected_layer_shapes, mlp.layers):
+            self.assertListEqual(expected_layer_shape, [tuple(p.shape) for p in layer.params])
+        self.assertFalse(mlp.layers[0].hidden)
+        for hidden_layer in mlp.layers[1:-2]:
+            self.assertTrue(hidden_layer.hidden)
+        self.assertFalse(mlp.layers[-1].hidden)
+
+    @parameterized.expand([
+        ([3, 3], None, None, 12,),
+        ([9, 9, 9], None, "adam", 180,),
+        ([18, 9, 3], ["sigmoid"] * 2, None, 201,),
+        ([10, 3, 6, 20, 10], ["embedding", "tanh", "softmax"], "adam", 380,),
+        ([10, 3, 6, 20, 10], ["embedding", "linear", "batchnorm", "tanh", "softmax"], None, 420,),
+    ])
+    def test_model_initialization(self, layer_sizes: list[int], algos: list[str], optimizer: str,
+                                  expected_buffer_size: int):
         model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
 
         self.assertEqual("test", model.model_id)
         self.assertEqual(0, len(model.progress))
+        self.assertTrue(optimizer is None or model.optimizer is not None)
         self.assertEqual(expected_buffer_size, model.training_buffer_size)
         self.assertEqual(expected_buffer_size, model.num_params)
 
@@ -76,7 +125,7 @@ class TestNeuralNetModel(unittest.TestCase):
         ([9, 18, 9], ["tanh"] * 2, [0.5] * 9, [0.5] * 9,),
         ([4, 8, 16], ["tanh", "softmax"], [0.5] * 4, [13],),
         ([3, 3, 3, 3], ["relu", "relu", "softmax"], [0.5] * 3, None,),
-        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [0, 5, 8], [2],)
+        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [0, 5, 8], [2],),
     ])
     def test_compute_output(self, layer_sizes: list[int], algos: list[str], sample_input: list[float], target):
         model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
@@ -91,35 +140,38 @@ class TestNeuralNetModel(unittest.TestCase):
             self.assertIsNotNone(cost)
 
     @parameterized.expand([
-        ([9, 9, 9], ["sigmoid"] * 2, [0.5] * 9, [1.0] + [0.0] * 8,),
-        ([9, 9, 9], ["relu", "softmax"], [0.5] * 9, [1]),
-        ([9, 9, 9], ["tanh"] * 2, [0.5] * 9, [1.0] + [0.0] * 8,),
-        ([18, 9, 3], ["relu", "sigmoid"], [0.5] * 18, [1.0] + [0.0] * 2,),
-        ([9, 18, 9], ["sigmoid", "softmax"], [0.5] * 9, [1]),
-        ([4, 8, 16], ["sigmoid"] * 2, [0.5] * 4, [1.0] + [0.0] * 15,),
-        ([3, 3, 3, 3], ["relu", "relu", "softmax"], [0.5] * 3, [0]),
-        ([18, 9, 3], ["relu"] * 2, [0.5] * 18, [1.0] + [0.0] * 2,),
-        ([9, 18, 9], ["relu", "tanh"], [0.5] * 9, [1.0] + [0.0] * 8,),
-        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [0, 5, 7], [5],),
+        ([9, 9, 9], ["sigmoid"] * 2, None, [0.5] * 9, [1.0] + [0.0] * 8,),
+        ([9, 9, 9], ["relu", "softmax"], "adam", [0.5] * 9, [1]),
+        ([9, 9, 9], ["tanh"] * 2, None, [0.5] * 9, [1.0] + [0.0] * 8,),
+        ([18, 9, 3], ["relu", "sigmoid"], "adam", [0.5] * 18, [1.0] + [0.0] * 2,),
+        ([9, 18, 9], ["sigmoid", "linear", "softmax"], None, [0.5] * 9, [1]),
+        ([4, 8, 16], ["sigmoid"] * 2, None, [0.5] * 4, [1.0] + [0.0] * 15,),
+        ([3, 3, 3, 3], ["relu", "relu", "softmax"], "adam", [0.5] * 3, [0]),
+        ([18, 9, 3], ["relu"] * 2, None, [0.5] * 18, [1.0] + [0.0] * 2,),
+        ([9, 18, 9], ["relu", "tanh"], "adam", [0.5] * 9, [1.0] + [0.0] * 8,),
+        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], "adam", [0, 5, 7], [5],),
+        ([9, 2, 6, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "softmax"], None, [0, 5, 7], [5],),
     ])
-    def test_train(self, layer_sizes: list[int], algos: list[str], sample_input: list[float], target: list[float]):
-        model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
+    def test_train(self, layer_sizes: list[int], algos: list[str], optimizer: str, sample_input: list[float],
+                   target: list[float]):
 
-        initial_weights = [l.weights.tolist() for l in model.layers]
-        initial_biases = [l.biases.tolist() for l in model.layers]
+        # clean up any persisted previous test model
+        NeuralNetworkModel.delete("test")
+
+        # create model
+        model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos, optimizer_algo=optimizer)
+
+        initial_params = [p.tolist() for p in model.params]
         _, initial_cost = model.compute_output(sample_input, target)
         # Add enough data to meet the training buffer size
         training_data = [(sample_input, target)] * model.training_buffer_size
 
         model.train(training_data, epochs=1, dropout_rate=0.001)
 
-        updated_weights = [l.weights.tolist() for l in model.layers]
-        updated_biases = [l.biases.tolist() for l in model.layers]
+        updated_params = [p.tolist() for p in model.params]
 
         # Check that the model data is still valid
-        for a, e in zip(updated_weights, initial_weights):
-            np.testing.assert_array_almost_equal(a, e, 1)
-        for a, e in zip(updated_biases, initial_biases):
+        for a, e in zip(updated_params, initial_params):
             np.testing.assert_array_almost_equal(a, e, 1)
 
         # Ensure training progress
@@ -132,12 +184,9 @@ class TestNeuralNetModel(unittest.TestCase):
         persisted_model = NeuralNetworkModel.deserialize(model.model_id)
 
         # Verify model parameters correctly deserialized
-        persisted_weights = [l.weights.tolist() for l in persisted_model.layers]
-        persisted_biases = [l.biases.tolist() for l in persisted_model.layers]
+        persisted_params = [p.tolist() for p in persisted_model.params]
 
-        for a, e in zip(persisted_weights, updated_weights):
-            np.testing.assert_array_almost_equal(a, e, 8)
-        for a, e in zip(persisted_biases, updated_biases):
+        for a, e in zip(persisted_params, updated_params):
             np.testing.assert_array_almost_equal(a, e, 8)
         self.assertEqual(len(persisted_model.progress), len(model.progress))
         self.assertEqual(len(persisted_model.training_data_buffer), 0)
