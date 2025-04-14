@@ -246,6 +246,10 @@ def model_progress(model_id: str = ModelIdQuery(...)):
         "average_cost": model.avg_cost,
     }
 
+@app.get("/stats/")
+def model_stats(model_id: str = ModelIdQuery(...)):
+    model = NeuralNetworkModel.deserialize(model_id)
+    return model.stats
 
 @app.delete("/model/")
 def delete_model(model_id: str = ModelIdQuery(...)):
