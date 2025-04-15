@@ -3,13 +3,13 @@ import logging
 import os
 import math
 import random
-from typing import Tuple
+from typing import Tuple, Callable
 import time
 from datetime import datetime as dt
 import torch
 import torch.nn as nn
 from torch import Tensor
-
+from torch.optim import Optimizer
 
 log = logging.getLogger(__name__)
 
@@ -18,19 +18,24 @@ class Layer:
     def __init__(self):
         self.hidden = False
         self.training = False
-        self.weights = torch.empty(0)
-        self.bias = torch.empty(0)
+        self.weights: Tensor | None = None
+        self.bias: Tensor | None = None
 
     @property
     def params(self) -> list[Tensor]:
         """
         :return: Layer parameters
         """
-        return []
+        p  = [] if self.weights is None else [self.weights]
+        p += [] if self.bias is None else [self.bias]
+        return p
 
     @params.setter
-    def params(self, new_params: list): # pragma: no cover
-        pass
+    def params(self, new_params: list):
+        if len(new_params) > 0:
+            self.weights = torch.tensor(new_params[0], dtype=torch.float64)
+        if len(new_params) > 1:
+            self.bias = torch.tensor(new_params[1], dtype=torch.float64)
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         """
@@ -51,17 +56,6 @@ class EmbeddingLayer(Layer):
         if all(sz > 0 for sz in (vocab_size, embedding_size)):
             self.weights: Tensor = torch.randn(vocab_size, embedding_size).double()
 
-    @property
-    def params(self) -> list[Tensor]:
-        """
-        :return: Layer parameters
-        """
-        return [self.weights]
-
-    @params.setter
-    def params(self, new_params: list):
-        self.weights = torch.tensor(new_params[0], dtype=torch.float64)
-
     def forward(self, input_tensor: Tensor) -> Tensor:
         return self.weights[input_tensor.long()]
 
@@ -76,22 +70,11 @@ class LinearLayer(Layer):
         """
         super().__init__()
         if all(sz > 0 for sz in (input_size, output_size)):
-            self.weights: Tensor = torch.randn(input_size, output_size).double()
-
-        self.bias: Tensor = (torch.randn(output_size) if bias_algo == "random"
-                            else torch.zeros(output_size)).double() # if bias_algo == "zeros"
-
-    @property
-    def params(self) -> list[Tensor]:
-        """
-        :return: Layer parameters
-        """
-        return [self.weights, self.bias]
-
-    @params.setter
-    def params(self, new_params: list):
-        self.weights = torch.tensor(new_params[0], dtype=torch.float64)
-        self.bias = torch.tensor(new_params[1], dtype=torch.float64)
+            self.weights = torch.randn(input_size, output_size).double()
+            if bias_algo is not None:
+                self.bias = (torch.zeros(output_size) if bias_algo == "zeros"
+                             else torch.randn(output_size) # if bias_algo == "random"
+                            ).double()
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         # if input is 3D (coming from embedding), then concatenated view is needed which can be achieved
@@ -110,30 +93,36 @@ class LinearLayer(Layer):
         # on flip side for batch 2D vectors of shape (batch_size, input_size) dot product result is
         # of shape (batch_size, output_size) then biases are automatically un-squeezed to shape
         # (batch_size, output_size) to repeatedly added for an output of shape (batch_size, output_size)
-        return input_view @ self.weights + self.bias
+        forwarded = input_view @ self.weights
+        if self.bias is not None:
+            forwarded += self.bias
+        return forwarded
 
 class BatchNormLayer(Layer):
     algo = "batchnorm"
-    def __init__(self, dim_size: int):
+    def __init__(self, dim_size: int, eps=1e-5, momentum=0.1):
         super().__init__()
-        self.gain = torch.ones(dim_size, dtype=torch.float64)
-        self.bias = torch.zeros(dim_size, dtype=torch.float64)
-        self.mean = torch.zeros(dim_size, dtype=torch.float64)
-        self.variance = torch.ones(dim_size, dtype=torch.float64)
+        self.eps = eps
+        self.momentum = momentum
+        self.gain = torch.ones(dim_size, dtype=torch.float64) if dim_size > 0 else None
+        self.bias = torch.zeros(dim_size, dtype=torch.float64) if dim_size > 0 else None
+        self.variance = torch.ones(dim_size, dtype=torch.float64) if dim_size > 0 else None
+        self.mean = torch.zeros(dim_size, dtype=torch.float64) if dim_size > 0 else None
 
     @property
     def params(self) -> list[Tensor]:
-        """
-        :return: Layer parameters
-        """
-        return [self.gain, self.bias]
+        p  = [] if self.gain is None else [self.gain]
+        p += [] if self.bias is None else [self.bias]
+        return p
 
     @params.setter
     def params(self, new_params: list):
-        self.gain = torch.tensor(new_params[0], dtype=torch.float64)
-        self.bias = torch.tensor(new_params[1], dtype=torch.float64)
-        self.mean = torch.zeros_like(self.bias, dtype=torch.float64)
-        self.variance = torch.ones_like(self.gain, dtype=torch.float64)
+        if len(new_params) > 0:
+            self.gain = torch.tensor(new_params[0], dtype=torch.float64)
+            self.variance = torch.ones_like(self.gain, dtype=torch.float64)
+        if len(new_params) > 1:
+            self.bias = torch.tensor(new_params[1], dtype=torch.float64)
+            self.mean = torch.zeros_like(self.bias, dtype=torch.float64)
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         if self.training: # calculate current batch norm statistics during training
@@ -141,12 +130,12 @@ class BatchNormLayer(Layer):
             variance = input_tensor.var(0, keepdim=True)
             # update overall statistics
             with torch.no_grad():
-                self.mean = 0.9 * self.mean + 0.1 * mean
-                self.variance = 0.9 * self.variance + 0.1 * variance
+                self.mean = (1 - self.momentum) * self.mean + self.momentum * mean
+                self.variance = (1 - self.momentum) * self.variance + self.momentum * variance
         else: # using overall statistics during inference
             mean, variance = self.mean, self.variance
         # forward pass
-        return self.gain * (input_tensor - mean) / torch.sqrt(variance + 1e-5) + self.bias
+        return self.gain * (input_tensor - mean) / torch.sqrt(variance + self.eps) + self.bias
 
 class SigmoidLayer(Layer):
     algo = "sigmoid"
@@ -167,17 +156,17 @@ class SoftmaxLayer(Layer):
     def forward(self, logits: Tensor) -> Tensor: return logits.softmax(dim=logits.ndim - 1)
 
 class MultiLayerPerceptron:
-    def __init__(self, layer_sizes: list[int], weight_algo: str = "xavier", bias_algo: str = "random",
-                 forward_algos: list[str] = None):
+    def __init__(self, layer_sizes: list[int], weight_algo = "xavier", bias_algo = "zeros",
+                 activation_algos: list[str] = None):
         """
         Initialize a multi-layer perceptron
         :param layer_sizes: List of integers where each integer represents the input size of the corresponding layer
         and the output size of the next layer.
         :param weight_algo: Initialization algorithm for weights (default: "xavier").
-        :param bias_algo: Initialization algorithm for biases (default: "random")
-        :param forward_algos: Forwarding algorithms per layer (default: "relu")
+        :param bias_algo: Initialization algorithm for biases (default: "zeros")
+        :param activation_algos: Forwarding algorithms per layer (default: ["relu"] * num_layers)
         """
-        algos = forward_algos or ["relu"] * (len(layer_sizes) - 1)
+        algos = activation_algos or ["relu"] * (len(layer_sizes) - 1)
         # ensure linear sandwich
         self.algos = []
         for i, algo in reversed(list(enumerate(algos))):
@@ -222,9 +211,9 @@ class MultiLayerPerceptron:
             # apply gain to linear layer weights based on activation algo
             if linear_layer_for_gain is not None:
                 if algo == "relu":
-                    linear_layer_for_gain.weights *= math.sqrt(2.0)
+                    linear_layer_for_gain.weights *= ReluLayer.weight_gain
                 elif algo == "tanh":
-                    linear_layer_for_gain.weights *= 5.0 / 3.0
+                    linear_layer_for_gain.weights *= TanhLayer.weight_gain
             # set hidden flag
             layer.hidden = (0 < i < num_algos - 1)
             # add layer
@@ -243,19 +232,19 @@ class MultiLayerPerceptron:
         return [p for l in self.layers for p in l.params]
 
 class NeuralNetworkModel(MultiLayerPerceptron):
-    def __init__(self, model_id, layer_sizes: list[int], weight_algo="xavier", bias_algo="random",
+    def __init__(self, model_id, layer_sizes: list[int] = None, weight_algo="xavier", bias_algo="zeros",
                  activation_algos=None, optimizer_algo="adam"):
         """
         Initialize a neural network with multiple layers.
-        :param layer_sizes: List of integers where each integer represents the size of a layer.
-        :param weight_algo: Initialization algorithm for weights (default: "xavier").
-        :param bias_algo: Initialization algorithm for biases (default: "random")
-        :param activation_algos: Activation algorithms (default: "relu")
+        :param layer_sizes: List of integers where each integer represents a dimension of a layer.
         :param optimizer_algo: Optimization algorithm (default: "adam")
         """
-        super().__init__(layer_sizes, weight_algo, bias_algo, activation_algos)
+        super().__init__(layer_sizes or [], weight_algo, bias_algo, activation_algos)
         self.model_id = model_id
-        self.optimizer = torch.optim.Adam(self.params) if optimizer_algo == "adam" and len(self.params) > 0 else None
+        self.optimizer: Optimizer | None = None
+        if len(self.params) > 0:
+            if optimizer_algo == "adam":
+                self.optimizer = torch.optim.Adam(self.params)
         self.progress = []
         self.training_data_buffer: list[Tuple] = []
         self.training_buffer_size: int = self.num_params
@@ -267,7 +256,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         """
         :return: Model weights
         """
-        return [l.weights for l in self.layers if l.weights.numel() > 0]
+        return [l.weights for l in self.layers if l.weights is not None]
 
     @property
     def num_params(self) -> int:
@@ -317,7 +306,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             model_path = os.path.join("models", f"model_{model_id}.json")
             with open(model_path, 'r', encoding='utf-8') as f:
                 model_data = json.load(f)
-            model = cls(model_id, [], activation_algos=model_data["algos"])
+            model = cls(model_id, activation_algos=model_data["algos"])
             model.set_model_data(model_data)
             optimizer_path = os.path.join("models", f"optimizer_{model_id}.pth")
             if os.path.exists(optimizer_path):
@@ -334,7 +323,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             model_path = os.path.join("models", f"model_{model_id}.json")
             os.remove(model_path)
             optimizer_path = os.path.join("models", f"optimizer_{model_id}.pth")
-            os.remove(optimizer_path)
+            if os.path.exists(optimizer_path):
+                os.remove(optimizer_path)
         except FileNotFoundError as e:
             log.warning(f"Failed to delete: {str(e)}")
 
@@ -478,10 +468,12 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         print(f"Model {self.model_id}: {training_dt} - Done training for {epochs} epochs, "
               f"Cost: {avg_progress_cost:.4f} Overall Cost: {self.avg_cost:.4f}")
         # Update stats
-        activation_hist = [torch.histogram(a, density=True) for a in activations]
-        activation_grad_hist = [None if a.grad is None else torch.histogram(a.grad, density=True)
+        hist_f: Callable[[torch.return_types.histogram], Tuple[list, list]] = (
+            lambda h: (h.bin_edges[:-1].tolist(), h.hist.tolist()))
+        act_hist = [hist_f(torch.histogram(a, density=True)) for a in activations]
+        act_grad_hist = [([],[]) if a.grad is None else hist_f(torch.histogram(a.grad, density=True))
                                 for a in activations]
-        weight_grad_hist = [torch.histogram(w.grad, density=True) for w in self.weights]
+        weight_grad_hist = [hist_f(torch.histogram(w.grad, density=True)) for w in self.weights]
         self.stats = {
             "layers": [{
                 "algo": l.algo,
@@ -489,20 +481,14 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                     "mean": a.mean().item(),
                     "std": a.std().item(),
                     "saturated": (a.abs() > 0.97).float().mean().item(),
-                    "histogram": {
-                        "x": ah.bin_edges[:-1].tolist(),
-                        "y": ah.hist.tolist()
-                    },
+                    "histogram": {"x": ahx, "y": ahy},
                 },
                 "gradient": {
                     "mean": a.grad.mean().item(),
                     "std": a.grad.std().item(),
-                    "histogram": {
-                        "x": agh.bin_edges[:-1].tolist(),
-                        "y": agh.hist.tolist()
-                    },
+                    "histogram": {"x": ghx, "y": ghy},
                 } if a.grad is not None else None,
-            } for l, a, ah, agh in zip(self.layers, activations, activation_hist, activation_grad_hist)],
+            } for l, a, (ahx, ahy), (ghx, ghy) in zip(self.layers, activations, act_hist, act_grad_hist)],
             "weights": [{
                 "shape": str(tuple(w.shape)),
                 "data": {
@@ -512,12 +498,9 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                 "gradient": {
                     "mean": w.grad.mean().item(),
                     "std": w.grad.std().item(),
-                    "histogram": {
-                        "x": wgh.bin_edges[:-1].tolist(),
-                        "y": wgh.hist.tolist()
-                    },
+                    "histogram": {"x": ghx, "y": ghy},
                 },
-            } for w, wgh in zip(self.weights, weight_grad_hist)],
+            } for w, (ghx, ghy) in zip(self.weights, weight_grad_hist)],
         }
         # Serialize model after training
         self.serialize()

@@ -116,6 +116,18 @@ def test_progress_endpoint(mock_deserialized_model):
         "average_cost": 0.123
     }
 
+def test_stats_endpoint(mock_deserialized_model):
+    mock_deserialized_model.stats = {
+        "some": "stats",
+    }
+
+    response = client.get("/stats/", params={"model_id": "test"})
+
+    assert response.status_code == 200
+
+    assert response.json() == {
+        "some": "stats",
+    }
 
 def test_not_found(mock_deserialized_model):
     mock_deserialized_model.compute_output.side_effect = KeyError("Testing key error :-)")
