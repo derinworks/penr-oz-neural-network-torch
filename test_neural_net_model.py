@@ -179,6 +179,7 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertNotEqual(model.progress[0]["cost"], initial_cost)
         self.assertEqual(sum([p["cost"] for p in model.progress]) / len(model.progress), model.avg_cost)
         self.assertEqual(len(model.training_data_buffer), 0)
+        self.assertIsNotNone(model.stats)
 
         # Deserialize and check if recorded training
         persisted_model = NeuralNetworkModel.deserialize(model.model_id)
