@@ -29,10 +29,10 @@ def mock_delete_model():
         yield mock_delete
 
 
-def test_redirect_to_docs():
+def test_redirect_to_dashboard():
     response = client.get("/")
     assert response.status_code == 200
-    assert response.url.path == "/docs"
+    assert response.url.path == "/dashboard"
 
 
 def test_create_model_endpoint(mock_new_model):

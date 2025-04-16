@@ -2,16 +2,22 @@ from __future__ import annotations
 import logging
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.params import Query
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 import asyncio
 from neural_net_model import NeuralNetworkModel
 
 app = FastAPI(
     title="Neural Network Model API",
-    description="API to create, serialize, and compute output of neural network models.",
+    description="API to create, serialize, compute output and diagnose of neural network models.",
     version="0.0.1"
 )
+
+# Mount static and templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
@@ -192,8 +198,13 @@ async def value_error_handler(_: Request, e: ValueError):
     raise HTTPException(status_code=400, detail=f"Value error occurred: {str(e)}")
 
 @app.get("/", include_in_schema=False)
-def redirect_to_docs():
-    return RedirectResponse(url="/docs")
+def redirect_to_dashboard():
+    return RedirectResponse(url="/dashboard")
+
+# Dashboard route
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    return templates.TemplateResponse(request, "dashboard.html")
 
 @app.post("/model/")
 def create_model(body: CreateModelRequest = Body(...)):

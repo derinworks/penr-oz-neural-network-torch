@@ -48,6 +48,9 @@ The gradients are automatically computed using [PyTorch](https://github.com/pyto
 5. **Interact with the Service**
 Test the endpoints using Swagger at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
+6. **Interact with the Dashboard**
+Diagnose model training at [http://127.0.0.1:8000/dashboard](http://127.0.0.1:8000/dashboard).
+
 ---
 
 ## Testing and Coverage
