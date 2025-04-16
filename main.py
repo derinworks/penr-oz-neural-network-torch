@@ -204,7 +204,7 @@ def redirect_to_dashboard():
 # Dashboard route
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    return templates.TemplateResponse(request, "dashboard.html")
 
 @app.post("/model/")
 def create_model(body: CreateModelRequest = Body(...)):
