@@ -328,17 +328,17 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         except FileNotFoundError as e:
             log.warning(f"Failed to delete: {str(e)}")
 
-    def compute_output(self, input_vector: list[float], target: list[float] = None) -> Tuple[list[float], float]:
+    def compute_output(self, input_data: list, target: list = None) -> Tuple[list, float]:
         """
         Compute activated output and optionally also cost compared to the provided target vector.
-        :param input_vector: Input vector
-        :param target: Target vector (optional)
-        :return: activation, cost (optional)
+        :param input_data: Input data 1D or 2D list
+        :param target: Target data 1D or 2D list (optional)
+        :return: activated output, cost (optional)
         """
         # forward pass
-        input_tensor = torch.tensor(input_vector, dtype=torch.float64)
+        input_tensor = torch.tensor(input_data, dtype=torch.float64)
         activations, cost = self._forward(input_tensor, target)
-        # last activation same shape list and a float cost is returned, if any
+        # last activation  and a float cost is returned, if any
         return activations[-1].tolist(), cost.item() if cost.numel() > 0 else None
 
     def _forward(self, input_tensor: Tensor, target: list, dropout_rate=0.0) -> Tuple[list[Tensor], Tensor]:

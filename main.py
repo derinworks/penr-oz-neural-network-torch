@@ -70,13 +70,13 @@ EXAMPLES = [
 
 
 class InputItem(BaseModel):
-    activation_vector: list[float] = Field(
+    activation_vector: list = Field(
         ...,
-        description="The input activation vector."
+        description="The input activation data. 1D or 2D supported."
     )
-    target_vector: list[float] | None = Field(
+    target_vector: list | None = Field(
         None,
-        description="The expected output vector, optional for input items."
+        description="The optional expected target data same size as input data."
     )
 
 
