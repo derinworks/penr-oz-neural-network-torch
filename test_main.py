@@ -1,11 +1,10 @@
+import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-from main import app
-
+from main import app, model_locks
 
 client = TestClient(app, raise_server_exceptions=False)
-
 
 @pytest.fixture
 def mock_new_model():
@@ -14,7 +13,6 @@ def mock_new_model():
         MockModel.return_value = mock_instance
         yield mock_instance
 
-
 @pytest.fixture
 def mock_deserialized_model():
     with patch("neural_net_model.NeuralNetworkModel.deserialize") as mock_deserialize:
@@ -22,18 +20,15 @@ def mock_deserialized_model():
         mock_deserialize.return_value = mock_instance
         yield mock_instance
 
-
 @pytest.fixture
 def mock_delete_model():
     with patch("neural_net_model.NeuralNetworkModel.delete") as mock_delete:
         yield mock_delete
 
-
 def test_redirect_to_dashboard():
     response = client.get("/")
     assert response.status_code == 200
     assert response.url.path == "/dashboard"
-
 
 def test_create_model_endpoint(mock_new_model):
     payload = {
@@ -54,7 +49,6 @@ def test_create_model_endpoint(mock_new_model):
 
     mock_new_model.serialize.assert_called_once()
 
-
 def test_output_endpoint(mock_deserialized_model):
     mock_deserialized_model.compute_output.return_value = ([0, 1, 0], None)
 
@@ -74,7 +68,6 @@ def test_output_endpoint(mock_deserialized_model):
 
     assert response.status_code == 200
 
-
 def test_train_endpoint(mock_deserialized_model):
     payload = {
         "model_id": "test",
@@ -91,19 +84,41 @@ def test_train_endpoint(mock_deserialized_model):
     response = client.put("/train/", json=payload)
 
     assert response.status_code == 202
+    assert response.json() == {"message": "Training for model test started asynchronously."}
 
-    assert response.json() == {
-        "message": "Training started asynchronously."
+def test_train_endpoint_returns_409_when_already_locked(mock_deserialized_model):
+    payload = {
+        "model_id": "test",
+        "training_data": [
+            {
+                "activation_vector": [0, 0, 0],
+                "target_vector":     [0, 1, 0]
+            }
+        ],
+        "epochs": 2,
+        "learning_rate": 0.01
     }
 
-    mock_deserialized_model.train.assert_called_once()
+    lock = asyncio.Lock()
+    model_locks["test"] = lock
+    # Manually acquire the lock
+    asyncio.run(lock.acquire())
 
+    # Now when we send request, it should see lock.locked() == True
+    response = client.put("/train/", json=payload)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Training already in progress for model test."}
+
+    # Clean up after test
+    del model_locks["test"]
 
 def test_progress_endpoint(mock_deserialized_model):
     mock_deserialized_model.progress = [
         "Some progress"
     ]
     mock_deserialized_model.avg_cost = 0.123
+    mock_deserialized_model.status = "Teapot ;-)"
 
     response = client.get("/progress/", params={"model_id": "test"})
 
@@ -113,7 +128,8 @@ def test_progress_endpoint(mock_deserialized_model):
         "progress": [
             "Some progress"
         ],
-        "average_cost": 0.123
+        "average_cost": 0.123,
+        "status": "Teapot ;-)"
     }
 
 def test_stats_endpoint(mock_deserialized_model):
@@ -142,7 +158,6 @@ def test_not_found(mock_deserialized_model):
     assert response.status_code == 404
     assert response.json() == {'detail': "Not found error occurred: 'Testing key error :-)'"}
 
-
 def test_invalid_payload():
     response = client.post("/output/", json={
         "model_id": "test",
@@ -151,7 +166,6 @@ def test_invalid_payload():
 
     assert response.status_code == 422
     assert "detail" in response.json()
-
 
 def test_value_error(mock_deserialized_model):
     mock_deserialized_model.compute_output.side_effect = ValueError("Testing value error :-)")
@@ -166,7 +180,6 @@ def test_value_error(mock_deserialized_model):
     assert response.status_code == 400
     assert response.json() == {'detail': 'Value error occurred: Testing value error :-)'}
 
-
 def test_unhandled_exception(mock_deserialized_model):
     mock_deserialized_model.compute_output.side_effect = RuntimeError("Unexpected error")
 
@@ -179,7 +192,6 @@ def test_unhandled_exception(mock_deserialized_model):
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Please refer to server logs"}
-
 
 def test_delete_model_endpoint(mock_delete_model):
     response = client.delete("/model/", params={"model_id": "test"})

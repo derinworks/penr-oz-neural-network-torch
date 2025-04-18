@@ -1,12 +1,14 @@
 from __future__ import annotations
 import logging
 from fastapi import FastAPI, HTTPException, Body, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.params import Query
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-import asyncio
+from asyncio import Lock, create_task
+from typing import Dict
 from neural_net_model import NeuralNetworkModel
 
 app = FastAPI(
@@ -208,10 +210,12 @@ async def dashboard(request: Request):
 
 @app.post("/model/")
 def create_model(body: CreateModelRequest = Body(...)):
-    model = NeuralNetworkModel(body.model_id, body.layer_sizes, body.weight_algo, body.bias_algo, body.activation_algos,
+    model_id = body.model_id
+    log.info(f"Requesting creation of model {model_id}")
+    model = NeuralNetworkModel(model_id, body.layer_sizes, body.weight_algo, body.bias_algo, body.activation_algos,
                                body.optimizer)
     model.serialize()
-    return {"message": f"Model {body.model_id} created and saved successfully"}
+    return {"message": f"Model {model_id} created and saved successfully"}
 
 
 @app.post("/output/")
@@ -225,7 +229,9 @@ def compute_model_output(body:
                                      "input": example
                                  }
                              } for idx, example in enumerate(EXAMPLES)} )):
-    model = NeuralNetworkModel.deserialize(body.model_id)
+    model_id = body.model_id
+    log.info(f"Requesting output for model {model_id}")
+    model = NeuralNetworkModel.deserialize(model_id)
     input_vector = body.input.activation_vector
     target = body.input.target_vector
     output, cost = model.compute_output(input_vector, target)
@@ -234,36 +240,64 @@ def compute_model_output(body:
             }
 
 
+# This will track active training sessions by model_id
+model_locks: Dict[str, Lock] = {}
+
 @app.put("/train/")
 async def train_model(body: TrainingRequest = Body(...)):
-    model = NeuralNetworkModel.deserialize(body.model_id)
+    model_id = body.model_id
+    log.info(f"Requesting training for model {model_id}")
+    model = NeuralNetworkModel.deserialize(model_id)
+
+    # Get or create a lock for this model
+    if model_id not in model_locks:
+        model_locks[model_id] = Lock()
+    lock = model_locks[model_id]
+
+    # If the model is already locked (training), return 409 Conflict
+    if lock.locked():
+        raise HTTPException(status_code=409, detail=f"Training already in progress for model {model_id}.")
 
     async def train():
-        model.train(
-            [(data.activation_vector, data.target_vector) for data in body.training_data],
-            epochs=body.epochs,
-            learning_rate=body.learning_rate,
-        )
+        async with lock:
+            await run_in_threadpool(
+                model.train,
+                [(data.activation_vector, data.target_vector) for data in body.training_data],
+                body.epochs,
+                body.learning_rate,
+                body.decay_rate,
+                body.dropout_rate,
+                body.l2_lambda,
+                body.adam_beta1,
+                body.adam_beta2,
+                body.adam_epsilon,
+            )
 
-    asyncio.create_task(train())
-    return JSONResponse(content={"message": "Training started asynchronously."}, status_code=202)
+    # Start training in the background
+    create_task(train())
 
+    # Respond with request accepted
+    return JSONResponse(content={"message": f"Training for model {model_id} started asynchronously."}, status_code=202)
 
 @app.get("/progress/")
 def model_progress(model_id: str = ModelIdQuery(...)):
+    log.info(f"Requesting progress for model {model_id}")
     model = NeuralNetworkModel.deserialize(model_id)
     return {
         "progress": model.progress,
         "average_cost": model.avg_cost,
+        "status": model.status,
     }
 
 @app.get("/stats/")
 def model_stats(model_id: str = ModelIdQuery(...)):
+    log.info(f"Requesting stats for model {model_id}")
     model = NeuralNetworkModel.deserialize(model_id)
     return model.stats
 
 @app.delete("/model/")
 def delete_model(model_id: str = ModelIdQuery(...)):
+    log.info(f"Requesting deletion of model {model_id}")
     NeuralNetworkModel.delete(model_id)
     return Response(status_code=204)
 
@@ -306,5 +340,9 @@ if __name__ == "__main__": # pragma: no cover
                             "handlers": ["default"],
                             "propagate": False,
                         },
+                    },
+                    "root": {
+                        "level": "INFO",
+                        "handlers": ["default"],
                     },
                 })

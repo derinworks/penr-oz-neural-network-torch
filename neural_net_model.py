@@ -250,6 +250,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_buffer_size: int = self.num_params
         self.avg_cost = None
         self.stats = None
+        self.status = "Created"
 
     @property
     def weights(self) -> list[Tensor]:
@@ -274,7 +275,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             "progress": self.progress,
             "training_data_buffer": self.training_data_buffer,
             "average_cost": self.avg_cost,
-            "stats": self.stats
+            "stats": self.stats,
+            "status": self.status,
         }
 
     def set_model_data(self, model_data: dict):
@@ -286,6 +288,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_buffer_size = self.num_params
         self.avg_cost = model_data["average_cost"]
         self.stats = model_data["stats"]
+        self.status = model_data["status"]
 
     def serialize(self):
         os.makedirs("models", exist_ok=True)
@@ -386,7 +389,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
         # Check if buffer size is sufficient
         if len(self.training_data_buffer) < self.training_buffer_size:
-            print(f"Model {self.model_id}: Insufficient training data. "
+            log.info(f"Model {self.model_id}: Insufficient training data. "
                   f"Current buffer size: {len(self.training_data_buffer)}, "
                   f"required: {self.training_buffer_size}")
             self.serialize() # serialize model with partial training data for next time
@@ -405,7 +408,13 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                 param_group["betas"] = (beta1, beta2)
                 param_group["eps"] = epsilon
 
+        # Reset model for training prep and save
         self.progress = []
+        self.stats = None
+        self.status = "Training"
+        self.serialize()
+
+        # Start training
         activations = None
         last_serialized = time.time()
         for epoch in range(epochs):
@@ -434,8 +443,11 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             # clear gradients
             for p in self.params:
                 p.grad = None
-            # on last epoch retain final activation gradients to collect stats
-            if epoch + 1 == epochs:
+            # check if training taking long
+            long_training = time.time() - last_serialized >= 10
+            # on last epoch or for long training intervals
+            # retain final activation gradients to collect stats
+            if epoch + 1 == epochs or long_training:
                 for a in activations:
                     a.retain_grad()
             # back propagate to populate gradients
@@ -448,31 +460,40 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
             # Record progress
             progress_dt, progress_cost = dt.now().isoformat(), cost.item()
-            self.progress.append({
-                "dt": progress_dt,
-                "epoch": epoch + 1,
-                "cost": progress_cost,
-            })
-            print(f"Model {self.model_id}: {progress_dt} - Epoch {epoch + 1}, Cost: {progress_cost:.4f}")
+            if epoch % max(1, epochs // 100) == 0: # only 100 progress points or less stored
+                self.progress.append({
+                    "dt": progress_dt,
+                    "epoch": epoch + 1,
+                    "cost": progress_cost,
+                })
+            # Log each
+            log.info(f"Model {self.model_id}: Epoch {epoch + 1}, Cost: {progress_cost:.4f}")
 
-            # Serialize model after 10 secs while training
-            if time.time() - last_serialized >= 10:
-                self.serialize() # pragma: no cover
+            # Serialize model while long training intervals
+            if long_training: # pragma: no cover
+                self._record_training_overall_progress(activations)
+                self.serialize()
+                last_serialized = time.time()
 
+        # Mark training finished
+        self.status = "Trained"
+        # Log training is done
+        log.info(f"Model {self.model_id}: Done training for {epochs} epochs.")
+        # Serialize model after training
+        self._record_training_overall_progress(activations)
+        self.serialize()
+
+    def _record_training_overall_progress(self, activations):
         # Calculate current average progress cost
         avg_progress_cost = sum([progress["cost"] for progress in self.progress]) / len(self.progress)
         # Update overall average cost
         self.avg_cost = ((self.avg_cost or avg_progress_cost) + avg_progress_cost) / 2.0
-        # Log training result
-        training_dt = dt.now().isoformat()
-        print(f"Model {self.model_id}: {training_dt} - Done training for {epochs} epochs, "
-              f"Cost: {avg_progress_cost:.4f} Overall Cost: {self.avg_cost:.4f}")
         # Update stats
         hist_f: Callable[[torch.return_types.histogram], Tuple[list, list]] = (
             lambda h: (h.bin_edges[:-1].tolist(), h.hist.tolist()))
         act_hist = [hist_f(torch.histogram(a, density=True)) for a in activations]
-        act_grad_hist = [([],[]) if a.grad is None else hist_f(torch.histogram(a.grad, density=True))
-                                for a in activations]
+        act_grad_hist = [([], []) if a.grad is None else hist_f(torch.histogram(a.grad, density=True))
+                         for a in activations]
         weight_grad_hist = [hist_f(torch.histogram(w.grad, density=True)) for w in self.weights]
         self.stats = {
             "layers": [{
@@ -502,5 +523,5 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                 },
             } for w, (ghx, ghy) in zip(self.weights, weight_grad_hist)],
         }
-        # Serialize model after training
-        self.serialize()
+        # Log training progress
+        log.info(f"Model {self.model_id} - Cost: {avg_progress_cost:.4f} Overall Cost: {self.avg_cost:.4f}")
