@@ -117,6 +117,9 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertTrue(optimizer is None or model.optimizer is not None)
         self.assertEqual(expected_buffer_size, model.training_buffer_size)
         self.assertEqual(expected_buffer_size, model.num_params)
+        self.assertIsNone(model.avg_cost)
+        self.assertIsNone(model.stats)
+        self.assertEqual("Created", model.status)
 
     @parameterized.expand([
         ([9, 9, 9], ["sigmoid"] * 2, [0.5] * 9, None,),
@@ -185,6 +188,7 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertEqual(sum([p["cost"] for p in model.progress]) / len(model.progress), model.avg_cost)
         self.assertEqual(len(model.training_data_buffer), 0)
         self.assertIsNotNone(model.stats)
+        self.assertEqual("Trained", model.status)
 
         # Deserialize and check if recorded training
         persisted_model = NeuralNetworkModel.deserialize(model.model_id)
@@ -197,6 +201,8 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertEqual(len(persisted_model.progress), len(model.progress))
         self.assertEqual(len(persisted_model.training_data_buffer), 0)
         self.assertEqual(persisted_model.avg_cost, model.avg_cost)
+        self.assertEqual(persisted_model.stats, model.stats)
+        self.assertEqual(persisted_model.status, model.status)
 
     def test_train_with_insufficient_data(self):
         model = NeuralNetworkModel(model_id="test", layer_sizes=[9, 9, 9], activation_algos=["relu"] * 2)
