@@ -126,14 +126,19 @@ class TestNeuralNetModel(unittest.TestCase):
         ([4, 8, 16], ["tanh", "softmax"], [0.5] * 4, [13],),
         ([3, 3, 3, 3], ["relu", "relu", "softmax"], [0.5] * 3, None,),
         ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [0, 5, 8], [2],),
+        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [[0, 5, 8],[1, 3, 7]], [[2],[4]],),
     ])
-    def test_compute_output(self, layer_sizes: list[int], algos: list[str], sample_input: list[float], target):
+    def test_compute_output(self, layer_sizes: list[int], algos: list[str], sample_input: list, target):
         model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
-        output_sizes = layer_sizes[1:]
 
         output, cost = model.compute_output(sample_input, target)
 
-        self.assertEqual(output_sizes[-1], len(output))
+        if isinstance(sample_input[0], list):
+            self.assertEqual(len(sample_input), len(output))
+            self.assertEqual(layer_sizes[-1], len(output[0]))
+        else:
+            self.assertEqual(layer_sizes[-1], len(output))
+
         if target is None:
             self.assertIsNone(cost)
         else:
