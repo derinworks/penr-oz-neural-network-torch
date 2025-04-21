@@ -13,11 +13,11 @@
     <div>
         <label for="model-id">Model ID:</label>
         <input type="text" id="model-id" placeholder="Enter model ID" />
-        <label for="algo-filter" style="margin-left: 1em;">Algo Filter:</label>
-        <input type="text" id="algo-filter" placeholder="e.g. tanh, relu" />
-        <button onclick="loadStats()">Load Stats</button>
+        <label for="layer-filter" style="margin-left: 1em;">Layer Filter:</label>
+        <input type="text" id="layer-filter" placeholder="e.g. tanh, relu or 0, 1 etc." />
+        <button onclick="refresh()">Refresh</button>
     </div>
 
-    <div id="stats-container"></div>
+    <div id="data-container"></div>
 </body>
 </html>

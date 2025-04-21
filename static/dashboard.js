@@ -9,7 +9,7 @@ function updateQueryParam(name, value) {
     window.history.replaceState({}, '', url); // no page reload
 }
 
-function renderHistogramChart({ container, histograms, labelFn, title, formatX = null, formatY = null }) {
+function renderChart({ container, datasets, stacked = false, title, formatX = null, formatY = null }) {
     const canvas = document.createElement('canvas');
     canvas.width = 800;
     canvas.height = 400;
@@ -17,26 +17,20 @@ function renderHistogramChart({ container, histograms, labelFn, title, formatX =
 
     const ctx = canvas.getContext('2d');
 
-    const allX = histograms.flatMap(hist => hist?.x ?? []);
+    const allX = datasets.flatMap(dataset => dataset.data.map(point => point.x));
+    const allY = datasets.flatMap(dataset => dataset.data.map(point => point.y));
+
     const minX = Math.min(...allX);
     const maxX = Math.max(...allX);
+    let minY = Math.min(...allY);
+    let maxY = Math.max(...allY);
 
-    const datasets = histograms.map((hist, index) => {
-        if (!hist) return null;
+    // Add padding to Y axis
+    const yRange = maxY - minY;
+    const padding = yRange === 0 ? 0.1 : yRange * 0.05; // handle flat lines
 
-        const dataPoints = hist.x.map((xVal, i) => ({
-            x: xVal,
-            y: hist.y[i]
-        }));
-
-        return {
-            label: labelFn(index),
-            data: dataPoints,
-            borderWidth: 2,
-            fill: true,
-            tension: 0.3
-        };
-    }).filter(d => d != null);
+    minY -= padding;
+    maxY += padding;
 
     new Chart(ctx, {
         type: 'line',
@@ -47,7 +41,7 @@ function renderHistogramChart({ container, histograms, labelFn, title, formatX =
                 mode: 'index',
                 intersect: false
             },
-            stacked: true,
+            stacked: stacked,
             parsing: false,
             plugins: {
                 title: title
@@ -84,8 +78,10 @@ function renderHistogramChart({ container, histograms, labelFn, title, formatX =
                     }
                 },
                 y: {
-                    beginAtZero: true,
-                    stacked: true,
+                    type: 'linear',
+                    min: minY,
+                    max: maxY,
+                    stacked: stacked,
                     ticks: {
                         callback: val => formatY ? formatY(val) : val
                     },
@@ -99,7 +95,34 @@ function renderHistogramChart({ container, histograms, labelFn, title, formatX =
     });
 }
 
-async function loadStats() {
+function renderLineChart({ container, datalists, labelFn, title, formatX = null, formatY = null }) {
+    const datasets = datalists.map((datalist, index) => datalist ? {
+        label: labelFn(index),
+        data: datalist,
+        borderWidth: 2,
+        fill: false,
+        tension: 0.3
+    } : null).filter(d => d != null);
+
+    renderChart({container, datasets, labelFn, title, formatX, formatY});
+}
+
+function renderHistogramChart({ container, histograms, labelFn, title, formatX = null, formatY = null }) {
+    const datasets = histograms.map((hist, index) => hist ? {
+        label: labelFn(index),
+        data: hist.x.map((xVal, i) => ({
+            x: xVal,
+            y: hist.y[i]
+        })),
+        borderWidth: 2,
+        fill: true,
+        tension: 0.3
+    } : null).filter(d => d != null);
+
+    renderChart({container, datasets, stacked: true, title, formatX, formatY});
+}
+
+async function refresh() {
     // Take inputs and store
     const modelId = document.getElementById('model-id').value.trim();
     if (!modelId) {
@@ -108,35 +131,93 @@ async function loadStats() {
     }
     updateQueryParam('model_id', modelId);
 
-    const algoFilter = document.getElementById('algo-filter').value.trim().toLowerCase();
-    updateQueryParam('algo', algoFilter);
+    const layerFilter = document.getElementById('layer-filter').value.trim().toLowerCase();
+    updateQueryParam('layer', layerFilter);
+
+    // Fetch progress
+    const progressResponse = await fetch(`/progress?model_id=${encodeURIComponent(modelId)}`);
+    if (!progressResponse.ok) {
+        alert("Failed to fetch progress. Check model ID.");
+        return;
+    }
+
+    const progressData = await progressResponse.json();
+    if (!progressData) {
+        // No progress recorded yet for model
+        return;
+    }
 
     // Fetch stats
-    const response = await fetch(`/stats?model_id=${encodeURIComponent(modelId)}`);
-    if (!response.ok) {
+    const statsResponse = await fetch(`/stats?model_id=${encodeURIComponent(modelId)}`);
+    if (!statsResponse.ok) {
         alert("Failed to fetch stats. Check model ID.");
         return;
     }
 
-    const data = await response.json();
-    if (!data) {
-        alert(`No stats recorded yet for model ${modelId}`);
+    const statsData = await statsResponse.json();
+    
+    // Clear previous data
+    const container = document.getElementById('data-container');
+    container.innerHTML = '';
+
+    // Render cost progress
+    const headerCostProgress = document.createElement('h2');
+    headerCostProgress.textContent = `Cost progress for model ${modelId}`;
+    container.appendChild(headerCostProgress);
+    const headerAvgCost = document.createElement('h3');
+    headerAvgCost.textContent = `Average Cost: ${progressData.average_cost}`;
+    container.appendChild(headerAvgCost);
+    renderLineChart({
+        container,
+        datalists: [progressData.progress.map(p => ({
+            x: p.epoch,
+            y: Math.log10(p.cost),
+        }))],
+        labelFn: () => `Cost progress`,
+        title: "Cost Progression (Log Scale)",
+        formatX: x => x.toFixed(0),
+        formatY: y => y.toFixed(4),
+    });
+
+    // layer to index lookup and filtering for corresponding weight index
+    const layerToIndex = new Map(statsData ? statsData.layers.map((layer, i) => [layer, i]): []);
+    const layerFilters = layerFilter.split(',').map(f => f.trim()).filter(f => f.length > 0);
+    const layerFilterFunc = (l, i) => (
+        layerFilters.length === 0 || layerFilters.some(f => (f == i) || l?.algo.includes(f))
+    );
+    const layerIndexFilterFunc = i => layerFilterFunc(statsData ? statsData.layers[i] : null, i);
+
+    // Render weight updates
+    const headerWeightUpdates = document.createElement('h2');
+    headerWeightUpdates.textContent = `Weight updates for model ${modelId}`;
+    container.appendChild(headerWeightUpdates);
+    const weightUpdateDatalists = [];
+    progressData.progress.forEach(p => {
+        p.weight_upd_ratio.forEach((wupdr, i) => {
+            if (wupdr && layerIndexFilterFunc(i)) {
+                (weightUpdateDatalists[i] ??= []).push({
+                    x: p.epoch,
+                    y: Math.log10(wupdr),
+                });
+            }
+        });
+    });
+    renderLineChart({
+        container,
+        datalists: weightUpdateDatalists,
+        labelFn: (i) => `Weights ${i}`,
+        title: "Weight Update Std Ratio (Log Scale)",
+        formatX: x => x.toFixed(0),
+        formatY: y => y.toFixed(4),
+    });
+
+    if (!statsData) {
+        // No stats recorded yet for model
         return;
     }
     
-    // Layer to index lookup
-    const layerToIndex = new Map(data.layers.map((layer, i) => [layer, i]));
-
-    // Apply optional algo filter
-    const algoFilters = algoFilter.split(',').map(f => f.trim()).filter(f => f.length > 0);
-    const layers = data.layers.filter(layer => {
-        const algo = layer.algo?.toLowerCase() || '';
-        return algoFilters.length === 0 || algoFilters.some(f => algo.includes(f));
-    });
-
-    // Clear previous stats
-    const container = document.getElementById('stats-container');
-    container.innerHTML = '';
+    // Apply optional layer filter
+    const layers = statsData.layers.filter(layerFilterFunc);
 
     // Render activation stats
     const headerActivations = document.createElement('h2');
@@ -157,6 +238,7 @@ async function loadStats() {
         histograms: layers.map(layer => layer.activation.histogram),
         labelFn: (i) => `Layer ${layerToIndex.get(layers[i])} (${layers[i].algo})`,
         title: 'Activation Distribution',
+        formatY: y => y.toFixed(4),
     });
 
     // Render gradient stats
@@ -180,6 +262,7 @@ async function loadStats() {
         labelFn: i => `Layer ${layerToIndex.get(layers[i])} (${layers[i].algo})`,
         title: 'Gradient Distribution',
         formatX: x => x.toFixed(6),
+        formatY: y => y.toFixed(4),
     });
 
 
@@ -187,21 +270,25 @@ async function loadStats() {
     const headerWeights = document.createElement('h2');
     headerWeights.textContent = `Weights for model ${modelId}`;
     container.appendChild(headerWeights);
-    data.weights.forEach((w, index) => {
-        const mean = w.gradient.mean.toExponential(6);
-        const std = w.gradient.std.toExponential(6);
-        const ratio = (std / w.data.std).toExponential(6);
-        
-        const header = document.createElement('h3');
-        header.textContent = `Weights ${w.shape}: mean ${mean} std ${std}  grad:data ratio ${ratio}`;
-        container.appendChild(header);
+    const weightStats = statsData.weights.map((w, i) => layerIndexFilterFunc(i) ? w : null);
+    weightStats.forEach((w, i) => {
+        if (w) {
+            const mean = w.gradient.mean.toExponential(6);
+            const std = w.gradient.std.toExponential(6);
+            const ratio = (std / w.data.std).toExponential(6);
+            
+            const header = document.createElement('h3');
+            header.textContent = `Weights ${i} - ${w.shape}: mean ${mean} std ${std}  grad:data ratio ${ratio}`;
+            container.appendChild(header);
+        }
     });
     renderHistogramChart({
         container,
-        histograms: data.weights.map(w => w.gradient.histogram),
-        labelFn: i => `Weights ${data.weights[i].shape}`,
+        histograms: weightStats.map(w => w?.gradient.histogram),
+        labelFn: i => `Weights ${i} - ${weightStats[i].shape}`,
         title: 'Weight Gradient Distribution',
         formatX: x => x.toFixed(3),
+        formatY: y => y.toFixed(4),
     });
 }
 
@@ -211,8 +298,8 @@ window.onload = () => {
     if (modelId) {
         document.getElementById('model-id').value = modelId;
     }
-    const algoFilter = getQueryParam('algo');
-    if (algoFilter) {
-        document.getElementById('algo-filter').value = algoFilter
+    const layerFilter = getQueryParam('layer');
+    if (layerFilter) {
+        document.getElementById('layer-filter').value = layerFilter
     }
 };
