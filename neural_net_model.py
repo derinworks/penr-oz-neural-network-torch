@@ -432,6 +432,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             # organize training data for forward pass
             input_tensor = torch.tensor([inpt for inpt, _ in training_sample], dtype=torch.float64)
             target = [tgt for _, tgt in training_sample]
+            # copy weights for later update ratio calc
+            prev_weights: list[Tensor] = [w.clone().detach() for w in self.weights]
             # require grad
             for p in self.params:
                 p.requires_grad_()
@@ -461,10 +463,15 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             # Record progress
             progress_dt, progress_cost = dt.now().isoformat(), cost.item()
             if epoch % max(1, epochs // 100) == 0: # only 100 progress points or less stored
+                with torch.no_grad():
+                    weight_upd_ratio = [((w - pw).data.std() / (w.data.std() + 1e-8)).item()
+                                        for pw, w in zip(prev_weights, self.weights)]
                 self.progress.append({
                     "dt": progress_dt,
                     "epoch": epoch + 1,
                     "cost": progress_cost,
+                    "weight_upd_ratio": [weight_upd_ratio.pop(0) if l.weights is not None and len(weight_upd_ratio) > 0
+                                         else None for l in self.layers],
                 })
             # Log each
             log.info(f"Model {self.model_id}: Epoch {epoch + 1}, Cost: {progress_cost:.4f}")
@@ -494,7 +501,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         act_hist = [hist_f(torch.histogram(a, density=True)) for a in activations]
         act_grad_hist = [([], []) if a.grad is None else hist_f(torch.histogram(a.grad, density=True))
                          for a in activations]
-        weight_grad_hist = [hist_f(torch.histogram(w.grad, density=True)) for w in self.weights]
+        weight_grad_hist = [([], []) if l.weights is None else hist_f(torch.histogram(l.weights.grad, density=True))
+                            for l in self.layers]
         self.stats = {
             "layers": [{
                 "algo": l.algo,
@@ -511,17 +519,17 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                 } if a.grad is not None else None,
             } for l, a, (ahx, ahy), (ghx, ghy) in zip(self.layers, activations, act_hist, act_grad_hist)],
             "weights": [{
-                "shape": str(tuple(w.shape)),
+                "shape": str(tuple(l.weights.shape)),
                 "data": {
-                    "mean": w.mean().item(),
-                    "std": w.std().item(),
+                    "mean": l.weights.mean().item(),
+                    "std": l.weights.std().item(),
                 },
                 "gradient": {
-                    "mean": w.grad.mean().item(),
-                    "std": w.grad.std().item(),
+                    "mean": l.weights.grad.mean().item(),
+                    "std": l.weights.grad.std().item(),
                     "histogram": {"x": ghx, "y": ghy},
                 },
-            } for w, (ghx, ghy) in zip(self.weights, weight_grad_hist)],
+            } if l.weights is not None else None for l, (ghx, ghy) in zip(self.layers, weight_grad_hist)],
         }
         # Log training progress
         log.info(f"Model {self.model_id} - Cost: {avg_progress_cost:.4f} Overall Cost: {self.avg_cost:.4f}")
