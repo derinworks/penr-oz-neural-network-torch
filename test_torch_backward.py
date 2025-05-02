@@ -121,5 +121,93 @@ class TestTorchBackward(unittest.TestCase):
         torch.testing.assert_close(d_emb, emb.grad, rtol=1e-14, atol=1e-16)
         torch.testing.assert_close(d_c, c.grad, rtol=1e-14, atol=1e-16)
 
+    def test_derived_manual_grad(self):
+        ## create model
+        block_size = 3
+        embed_size = 10
+        hidden_size = 64
+        vocab_size = 27
+        model = NeuralNetworkModel("test",
+                                   [vocab_size, embed_size, embed_size*block_size, hidden_size, vocab_size],
+                                   "xavier", "random",
+                                   ["embedding", "linear", "batchnorm", "tanh", "linear", "softmax"],
+                                   None)
+        batch_size = model.training_buffer_size
+
+        ## Add enough data to meet the training buffer size as batch size
+        sample_input = torch.randint(low=0, high=vocab_size, size=(batch_size, block_size))
+        target = [[random.randint(0, vocab_size - 1)] for _ in range(batch_size)]
+
+        ## Forward pass
+        for p in model.params:
+            p.requires_grad_()
+        activations, cost = model._forward(sample_input, target)
+
+        ## torch backward
+        for p in model.params:
+            p.grad = None
+        for a in activations:
+            a.retain_grad()
+        cost.backward()
+
+        ## Unpack tensors
+        emb, h_pre_bn, h_pre_act, h, logits, probs = tuple(activations)
+        c, w1, b1, bn_gain, bn_bias, w2, b2 = tuple(model.params)
+        y_b = torch.tensor([tgt[0] for tgt in target], dtype=torch.int64)
+
+        # # derived batchnorm
+        bn_raw = (h_pre_act - bn_bias) / bn_gain
+        bn_diff = h_pre_bn - (1.0 / batch_size * h_pre_bn.sum(0, keepdim=True))
+        bn_var = 1 / (batch_size - 1) * (bn_diff ** 2).sum(0, keepdim=True)
+        bn_var_inv = (bn_var + 1e-5) ** -0.5
+
+        # derived embedding
+        emb_cat = emb.view(emb.shape[0], -1)
+
+        ## derived backward
+        ## linear layer 2
+        d_logits = probs / batch_size  # derived cross entropy grad matching
+        d_logits[range(batch_size), y_b] -= 1.0 / batch_size # derived cross entropy grad not matching
+        d_w2 = h.T @ d_logits # h @ w2 + b2
+        d_b2 = (1.0 * d_logits).sum(0) # h @ w2 + b2
+        ## non-linear layer 1
+        d_h = d_logits @ w2.T # h @ w2 + b2
+        ## batchnorm layer 1
+        d_h_pre_act = (1.0 - h ** 2) * d_h # torch.tanh(h_pre_act)
+        d_bn_gain = (bn_raw * d_h_pre_act).sum(0) # bngain * bnraw + bnbias
+        d_bn_bias = d_h_pre_act.sum(0) # bngain * bnraw + bnbias
+        ## linear layer 1
+        d_h_pre_bn = bn_gain * bn_var_inv / batch_size * (batch_size * d_h_pre_act - d_h_pre_act.sum(0) -
+                                                          batch_size / (batch_size - 1) * bn_raw *
+                                                          (d_h_pre_act * bn_raw).sum(0)) # derived batchnorm grad
+        d_w1 = emb_cat.T @ d_h_pre_bn # emb_cat @ w1 + b1
+        d_b1 = (1.0 * d_h_pre_bn).sum(0) # emb_cat @ w1 + b1
+        d_emb_cat = d_h_pre_bn @ w1.T # emb_cat @ w1 + b1
+        ## embedding layer
+        d_emb = d_emb_cat.view(emb.shape) # emb.view(emb.shape[0], -1)
+        d_c = torch.zeros_like(c) # c[sample_input]
+        for i in range(batch_size):
+            for j in range(block_size):
+                d_c[sample_input[i,j]] += d_emb[i,j]
+
+        # verify
+        ## linear layer 2
+        torch.testing.assert_close(d_logits, logits.grad, rtol=1e-15, atol=1e-17)
+        torch.testing.assert_close(d_w2, w2.grad, rtol=1e-14, atol=1e-16)
+        torch.testing.assert_close(d_b2, b2.grad, rtol=1e-14, atol=1e-16)
+        # non-linear layer 1
+        torch.testing.assert_close(d_h, h.grad, rtol=1e-15, atol=1e-17)
+        ## batchnorm layer 1
+        torch.testing.assert_close(d_h_pre_act, h_pre_act.grad, rtol=1e-17, atol=1e-19)
+        torch.testing.assert_close(d_bn_gain, bn_gain.grad, rtol=1e-14, atol=1e-16)
+        torch.testing.assert_close(d_bn_bias, bn_bias.grad, rtol=1e-15, atol=1e-17)
+        ## linear layer 1
+        torch.testing.assert_close(d_h_pre_bn, h_pre_bn.grad, rtol=1e-15, atol=1e-17)
+        torch.testing.assert_close(d_w1, w1.grad, rtol=1e-14, atol=1e-16)
+        torch.testing.assert_close(d_b1, b1.grad, rtol=1e-14, atol=1e-16)
+        ## embedding layer
+        torch.testing.assert_close(d_emb, emb.grad, rtol=1e-14, atol=1e-16)
+        torch.testing.assert_close(d_c, c.grad, rtol=1e-14, atol=1e-16)
+
 if __name__ == '__main__':
     unittest.main()
