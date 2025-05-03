@@ -35,7 +35,7 @@ class TestTorchBackward(unittest.TestCase):
         cost.backward()
 
         ## Unpack tensors
-        emb, h_pre_bn, h_pre_act, h, logits, probs = tuple(activations)
+        emb, emb_cat, h_pre_bn, h_pre_act, h, logits, probs = tuple(activations)
         c, w1, b1, bn_gain, bn_bias, w2, b2 = tuple(model.params)
         y_b = torch.tensor([tgt[0] for tgt in target], dtype=torch.int64)
 
@@ -53,9 +53,6 @@ class TestTorchBackward(unittest.TestCase):
         bn_var = 1 / (batch_size - 1) * bn_diff_2.sum(0, keepdim=True)
         bn_var_inv = (bn_var + 1e-5) ** -0.5
         bn_raw = bn_diff * bn_var_inv
-
-        # manual embedding
-        emb_cat = emb.view(emb.shape[0], -1)
 
         ## manual backward
         ## cross entropy
@@ -151,7 +148,7 @@ class TestTorchBackward(unittest.TestCase):
         cost.backward()
 
         ## Unpack tensors
-        emb, h_pre_bn, h_pre_act, h, logits, probs = tuple(activations)
+        emb, emb_cat, h_pre_bn, h_pre_act, h, logits, probs = tuple(activations)
         c, w1, b1, bn_gain, bn_bias, w2, b2 = tuple(model.params)
         y_b = torch.tensor([tgt[0] for tgt in target], dtype=torch.int64)
 
@@ -160,9 +157,6 @@ class TestTorchBackward(unittest.TestCase):
         bn_diff = h_pre_bn - (1.0 / batch_size * h_pre_bn.sum(0, keepdim=True))
         bn_var = 1 / (batch_size - 1) * (bn_diff ** 2).sum(0, keepdim=True)
         bn_var_inv = (bn_var + 1e-5) ** -0.5
-
-        # derived embedding
-        emb_cat = emb.view(emb.shape[0], -1)
 
         ## derived backward
         ## linear layer 2

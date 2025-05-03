@@ -59,6 +59,15 @@ class EmbeddingLayer(Layer):
     def forward(self, input_tensor: Tensor) -> Tensor:
         return self.weights[input_tensor.long()]
 
+class FlattenLayer(Layer):
+    algo = "flatten"
+    def forward(self, input_tensor: Tensor) -> Tensor:
+        if input_tensor.dim() > 2: # batch input
+            flattened = input_tensor.view(input_tensor.shape[0], -1)
+        else:
+            flattened = input_tensor.view(-1)
+        return flattened
+
 class LinearLayer(Layer):
     algo = "linear"
     def __init__(self, input_size: int = 0, output_size: int = 0, bias_algo="zeros"):
@@ -77,23 +86,13 @@ class LinearLayer(Layer):
                             ).double()
 
     def forward(self, input_tensor: Tensor) -> Tensor:
-        # if input is 3D (coming from embedding), then concatenated view is needed which can be achieved
-        # by (-1, input_size of weights)
-        # check if last two dimensions of the input can be viewed as input dimension of weights, if needed
-        weight_input_size = self.weights.size(0)
-        if input_tensor.dim() == 2 and input_tensor.numel() == weight_input_size:
-            input_view = input_tensor.view(-1)
-        elif input_tensor.dim() >= 2 and math.prod(input_tensor.shape[-2:]) == weight_input_size:
-            input_view = input_tensor.view(-1, weight_input_size)
-        else:
-            input_view = input_tensor
         # PyTorch internally treats 1D vector of shape (input_size, ) as (1, input_size)
         # to achieve dot product of (1, input_size) x (input_size, output_size) = (1, output_size)
         # then automatically squeezes it to (output_size,) which matches biases shape (output_size,)
         # on flip side for batch 2D vectors of shape (batch_size, input_size) dot product result is
         # of shape (batch_size, output_size) then biases are automatically un-squeezed to shape
         # (batch_size, output_size) to repeatedly added for an output of shape (batch_size, output_size)
-        forwarded = input_view @ self.weights
+        forwarded = input_tensor @ self.weights
         if self.bias is not None:
             forwarded += self.bias
         return forwarded
@@ -175,6 +174,8 @@ class MultiLayerPerceptron:
                     i == 0 or algos[i - 1] not in ["batchnorm", "linear"]
             ):
                 self.algos.insert(0, "linear")
+            elif algo in ["embedding"] and algos[i + 1] not in ["flatten"]:
+                self.algos.insert(i + 1, "flatten")
         # build layers
         self.layers: list[Layer] = []
         size_idx = 0
@@ -188,6 +189,8 @@ class MultiLayerPerceptron:
             # create layer
             if algo == "embedding":
                 layer = EmbeddingLayer(in_sz, out_sz)
+            elif algo == "flatten":
+                layer = FlattenLayer()
             elif algo == "linear":
                 layer = LinearLayer(in_sz, out_sz, bias_algo)
             elif algo == "batchnorm":
