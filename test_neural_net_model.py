@@ -5,7 +5,7 @@ import torch
 from neural_net_model import (Layer,
                               LinearLayer, EmbeddingLayer, BatchNormLayer,
                               SigmoidLayer, SoftmaxLayer, ReluLayer, TanhLayer,
-                              NeuralNetworkModel, MultiLayerPerceptron)
+                              NeuralNetworkModel, MultiLayerPerceptron, FlattenLayer)
 
 class TestNeuralNetModel(unittest.TestCase):
 
@@ -81,11 +81,11 @@ class TestNeuralNetModel(unittest.TestCase):
          [LinearLayer, ReluLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
          [[(3,3),(3,)],[],[(3,3),(3,)],[],[(3,3),(3,)],[]],),
         ([18, 2, 6, 20, 18], "gaussian", "random", ["embedding", "tanh", "linear", "softmax"],
-         [EmbeddingLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
-         [[(18,2)],[(6,20),(20,)],[],[(20,18),(18,)],[]],),
+         [EmbeddingLayer, FlattenLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
+         [[(18,2)],[],[(6,20),(20,)],[],[(20,18),(18,)],[]],),
         ([18, 2, 6, 20, 18], "he", "zeros", ["embedding", "linear", "batchnorm", "tanh", "softmax"],
-         [EmbeddingLayer, LinearLayer, BatchNormLayer, TanhLayer, LinearLayer, SoftmaxLayer],
-         [[(18, 2)], [(6, 20), (20,)], [(20,), (20,)], [], [(20, 18), (18,)], []],),
+         [EmbeddingLayer, FlattenLayer, LinearLayer, BatchNormLayer, TanhLayer, LinearLayer, SoftmaxLayer],
+         [[(18,2)],[],[(6,20),(20,)],[(20,), (20,)],[],[(20,18),(18,)],[]],),
     ])
     def test_multi_layer_perceptron_init(self, l_sizes: list[int], w_algo: str, b_algo: str, fwd_algos: list[str],
                                          expected_layers: list[str],
