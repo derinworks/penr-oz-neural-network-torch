@@ -1,3 +1,4 @@
+import math
 import unittest
 from parameterized import parameterized
 import numpy as np
@@ -118,6 +119,7 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertEqual(expected_buffer_size, model.training_buffer_size)
         self.assertEqual(expected_buffer_size, model.num_params)
         self.assertIsNone(model.avg_cost)
+        self.assertEqual(0, len(model.avg_cost_history))
         self.assertIsNone(model.stats)
         self.assertEqual("Created", model.status)
 
@@ -173,6 +175,8 @@ class TestNeuralNetModel(unittest.TestCase):
         _, initial_cost = model.compute_output(sample_input, target)
         # Add enough data to meet the training buffer size
         training_data = [(sample_input, target)] * model.training_buffer_size
+        # Add average cost history to test cap at 100
+        model.avg_cost_history = [1.0] * 100
 
         model.train(training_data, epochs=1, dropout_rate=0.001)
 
@@ -186,6 +190,9 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertGreater(len(model.progress), 0)
         self.assertNotEqual(model.progress[0]["cost"], initial_cost)
         self.assertEqual(sum([p["cost"] for p in model.progress]) / len(model.progress), model.avg_cost)
+        self.assertEqual(len(model.avg_cost_history), 100)
+        self.assertEqual(model.avg_cost_history[0], 1.0)
+        self.assertEqual(model.avg_cost_history[-1], model.avg_cost)
         self.assertEqual(len(model.training_data_buffer), 0)
         self.assertIsNotNone(model.stats)
         self.assertEqual("Trained", model.status)
@@ -201,6 +208,7 @@ class TestNeuralNetModel(unittest.TestCase):
         self.assertEqual(len(persisted_model.progress), len(model.progress))
         self.assertEqual(len(persisted_model.training_data_buffer), 0)
         self.assertEqual(persisted_model.avg_cost, model.avg_cost)
+        self.assertEqual(persisted_model.avg_cost_history, model.avg_cost_history)
         self.assertEqual(persisted_model.stats, model.stats)
         self.assertEqual(persisted_model.status, model.status)
 

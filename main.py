@@ -286,6 +286,7 @@ def model_progress(model_id: str = ModelIdQuery(...)):
     return {
         "progress": model.progress,
         "average_cost": model.avg_cost,
+        "average_cost_history": model.avg_cost_history,
         "status": model.status,
     }
 
