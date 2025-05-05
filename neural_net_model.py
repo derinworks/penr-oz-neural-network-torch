@@ -252,6 +252,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_data_buffer: list[Tuple] = []
         self.training_buffer_size: int = self.num_params
         self.avg_cost = None
+        self.avg_cost_history = []
         self.stats = None
         self.status = "Created"
 
@@ -278,6 +279,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
             "progress": self.progress,
             "training_data_buffer": self.training_data_buffer,
             "average_cost": self.avg_cost,
+            "average_cost_history": self.avg_cost_history,
             "stats": self.stats,
             "status": self.status,
         }
@@ -290,6 +292,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_data_buffer = model_data["training_data_buffer"]
         self.training_buffer_size = self.num_params
         self.avg_cost = model_data["average_cost"]
+        self.avg_cost_history = model_data["average_cost_history"]
         self.stats = model_data["stats"]
         self.status = model_data["status"]
 
@@ -495,9 +498,13 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
     def _record_training_overall_progress(self, activations):
         # Calculate current average progress cost
-        avg_progress_cost = sum([progress["cost"] for progress in self.progress]) / len(self.progress)
+        progress_cost = [progress["cost"] for progress in self.progress]
+        avg_progress_cost = sum(progress_cost) / len(self.progress)
         # Update overall average cost
         self.avg_cost = ((self.avg_cost or avg_progress_cost) + avg_progress_cost) / 2.0
+        self.avg_cost_history.append(self.avg_cost)
+        if len(self.avg_cost_history) > 100: #
+            self.avg_cost_history.pop(random.randint(1, 98))
         # Update stats
         hist_f: Callable[[torch.return_types.histogram], Tuple[list, list]] = (
             lambda h: (h.bin_edges[:-1].tolist(), h.hist.tolist()))
