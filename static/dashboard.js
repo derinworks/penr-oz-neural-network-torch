@@ -178,6 +178,17 @@ async function refresh() {
         formatX: x => x.toFixed(0),
         formatY: y => y.toFixed(4),
     });
+    renderLineChart({
+        container,
+        datalists: [progressData.average_cost_history.map((avg_cost, i) => ({
+            x: i,
+            y: Math.log10(avg_cost),
+        }))],
+        labelFn: () => `Overall Average Cost`,
+        title: "Average Cost Overall (Log Scale)",
+        formatX: x => x.toFixed(0),
+        formatY: y => y.toFixed(4),
+    });
 
     // layer to index lookup and filtering for corresponding weight index
     const layerToIndex = new Map(statsData ? statsData.layers.map((layer, i) => [layer, i]): []);
