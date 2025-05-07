@@ -80,7 +80,7 @@ class LinearLayer(Layer):
         super().__init__()
         if all(sz > 0 for sz in (input_size, output_size)):
             self.weights = torch.randn(input_size, output_size).double()
-            if bias_algo is not None:
+            if bias_algo:
                 self.bias = (torch.zeros(output_size) if bias_algo == "zeros"
                              else torch.randn(output_size) # if bias_algo == "random"
                             ).double()
