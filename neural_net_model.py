@@ -424,8 +424,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         activations = None
         last_serialized = time.time()
         for epoch in range(epochs):
-            random.shuffle(training_data)
-            training_sample = training_data[:training_sample_size]
+            random_indices = torch.randint(0, len(training_data), (training_sample_size,))
+            training_sample = [training_data[i] for i in random_indices]
 
             # decay learning rate
             current_learning_rate = learning_rate * (decay_rate ** epoch)
