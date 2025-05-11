@@ -123,6 +123,16 @@ class CreateModelRequest(ModelRequest):
         examples=["adam", "stochastic"],
         description="The optimizer to use for updating for gradient descent"
     )
+    batchnorm_eps: float = Field(
+        1e-5,
+        examples=[1e-5],
+        description="Batch Normalization Epsilon"
+    )
+    batchnorm_momentum: float = Field(
+        0.1,
+        examples=[0.1],
+        description="Batch Normalization Momentum"
+    )
 
 
 class ActivationRequest(ModelRequest):
@@ -218,7 +228,7 @@ def create_model(body: CreateModelRequest = Body(...)):
     model_id = body.model_id
     log.info(f"Requesting creation of model {model_id}")
     model = NeuralNetworkModel(model_id, body.layer_sizes, body.weight_algo, body.bias_algo, body.activation_algos,
-                               body.optimizer)
+                               body.optimizer, (body.batchnorm_eps, body.batchnorm_momentum))
     model.serialize()
     return {"message": f"Model {model_id} created and saved successfully"}
 

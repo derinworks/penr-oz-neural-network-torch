@@ -30,12 +30,20 @@ class Layer:
         p += [] if self.bias is None else [self.bias]
         return p
 
-    @params.setter
-    def params(self, new_params: list):
+    @property
+    def state_dict(self) -> dict:
+        return {
+            "params": [p.tolist() for p in self.params],
+        }
+
+    @state_dict.setter
+    def state_dict(self, new_state: dict):
+        new_params: list = new_state["params"]
         if len(new_params) > 0:
             self.weights = torch.tensor(new_params[0], dtype=torch.float64)
         if len(new_params) > 1:
             self.bias = torch.tensor(new_params[1], dtype=torch.float64)
+
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         """
@@ -114,14 +122,24 @@ class BatchNormLayer(Layer):
         p += [] if self.bias is None else [self.bias]
         return p
 
-    @params.setter
-    def params(self, new_params: list):
+    @property
+    def state_dict(self) -> dict:
+        return super().state_dict | {
+            "eps": self.eps,
+            "momentum": self.momentum,
+        }
+
+    @state_dict.setter
+    def state_dict(self, new_state: dict):
+        new_params: list = new_state["params"]
         if len(new_params) > 0:
             self.gain = torch.tensor(new_params[0], dtype=torch.float64)
             self.variance = torch.ones_like(self.gain, dtype=torch.float64)
         if len(new_params) > 1:
             self.bias = torch.tensor(new_params[1], dtype=torch.float64)
             self.mean = torch.zeros_like(self.bias, dtype=torch.float64)
+        self.eps = new_state["eps"]
+        self.momentum = new_state["momentum"]
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         if self.training: # calculate current batch norm statistics during training
@@ -156,7 +174,7 @@ class SoftmaxLayer(Layer):
 
 class MultiLayerPerceptron:
     def __init__(self, layer_sizes: list[int], weight_algo = "xavier", bias_algo = "zeros",
-                 activation_algos: list[str] = None):
+                 activation_algos: list[str] = None, batchnorm=(1e-5, 0.1)):
         """
         Initialize a multi-layer perceptron
         :param layer_sizes: List of integers where each integer represents the input size of the corresponding layer
@@ -164,6 +182,7 @@ class MultiLayerPerceptron:
         :param weight_algo: Initialization algorithm for weights (default: "xavier").
         :param bias_algo: Initialization algorithm for biases (default: "zeros")
         :param activation_algos: Forwarding algorithms per layer (default: ["relu"] * num_layers)
+        :param batchnorm: Batch normalization configuration a tuple of epsilon and momentum
         """
         algos = activation_algos or ["relu"] * (len(layer_sizes) - 1)
         # ensure linear sandwich
@@ -194,7 +213,7 @@ class MultiLayerPerceptron:
             elif algo == "linear":
                 layer = LinearLayer(in_sz, out_sz, bias_algo)
             elif algo == "batchnorm":
-                layer = BatchNormLayer(in_sz)
+                layer = BatchNormLayer(in_sz, *batchnorm)
             elif algo == "relu":
                 layer = ReluLayer()
             elif algo == "sigmoid":
@@ -236,13 +255,13 @@ class MultiLayerPerceptron:
 
 class NeuralNetworkModel(MultiLayerPerceptron):
     def __init__(self, model_id, layer_sizes: list[int] = None, weight_algo="xavier", bias_algo="zeros",
-                 activation_algos=None, optimizer_algo="adam"):
+                 activation_algos=None, optimizer_algo="adam", batchnorm=(1e-5, 0.1)):
         """
         Initialize a neural network with multiple layers.
         :param layer_sizes: List of integers where each integer represents a dimension of a layer.
         :param optimizer_algo: Optimization algorithm (default: "adam")
         """
-        super().__init__(layer_sizes or [], weight_algo, bias_algo, activation_algos)
+        super().__init__(layer_sizes or [], weight_algo, bias_algo, activation_algos, batchnorm)
         self.model_id = model_id
         self.optimizer: Optimizer | None = None
         if len(self.params) > 0:
@@ -273,9 +292,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
     def get_model_data(self) -> dict:
         return {
             "algos": self.algos,
-            "layers": [{
-                "params": [p.tolist() for p in l.params],
-            } for l in self.layers],
+            "layers": [l.state_dict for l in self.layers],
             "progress": self.progress,
             "training_data_buffer": self.training_data_buffer,
             "average_cost": self.avg_cost,
@@ -286,7 +303,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
     def set_model_data(self, model_data: dict):
         for layer, layer_state in zip(self.layers, model_data["layers"]):
-            layer.params = layer_state["params"]
+            layer.state_dict = layer_state
 
         self.progress = model_data["progress"]
         self.training_data_buffer = model_data["training_data_buffer"]
