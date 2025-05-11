@@ -376,13 +376,14 @@ class NeuralNetworkModel(MultiLayerPerceptron):
 
         return forwarded_tensors, cost
 
-    def train(self, training_data: list[Tuple[list[float], list[float]]], epochs=100, learning_rate=0.01, decay_rate=0.9,
-              dropout_rate=0.2, l2_lambda=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def train(self, training_data: list[Tuple[list[float], list[float]]], epochs=100, learning_rate=0.01, batch_size=None,
+              decay_rate=0.9, dropout_rate=0.2, l2_lambda=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
         Train the neural network using the provided training data.
         :param training_data: list of tuples of input and target
         :param epochs: Number of training iterations.
         :param learning_rate: Learning rate for gradient descent.
+        :param batch_size: Batch size override for training sample.
         :param decay_rate: Decay rate of learning rate for finer gradient descent
         :param dropout_rate: Fraction of neurons to drop during training for hidden layers
         :param l2_lambda: L2 regularization strength
@@ -406,7 +407,8 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         self.training_data_buffer = []  # Clear buffer
 
         # Calculate sample size
-        training_sample_size = int(len(training_data) / epochs)  # sample equally per epoch
+        training_sample_size = batch_size or int(len(training_data) / epochs)  # explicit or sample equally per epoch
+        log.info(f"Training sample size: {training_sample_size}")
 
         # Adjust optimizer hyperparameters
         if self.optimizer is not None:

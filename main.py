@@ -148,6 +148,11 @@ class TrainingRequest(ModelRequest):
         examples=[0.01],
         description="The learning rate for training."
     )
+    batch_size: int | None = Field(
+        None,
+        examples=[32],
+        description="The batch size for training sample each epoch. (Optional)"
+    )
     decay_rate: float = Field(
         0.9,
         examples=[0.9],
@@ -265,6 +270,7 @@ async def train_model(body: TrainingRequest = Body(...)):
                 [(data.activation_vector, data.target_vector) for data in body.training_data],
                 body.epochs,
                 body.learning_rate,
+                body.batch_size,
                 body.decay_rate,
                 body.dropout_rate,
                 body.l2_lambda,
