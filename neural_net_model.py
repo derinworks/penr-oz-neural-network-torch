@@ -538,7 +538,14 @@ class NeuralNetworkModel(MultiLayerPerceptron):
                 "activation": {
                     "mean": a.mean().item(),
                     "std": a.std().item(),
-                    "saturated": (a.abs() > 0.97).float().mean().item(),
+                    "saturated": (
+                        (torch.norm(a, dim=-1) > 5.0) if l.algo == "embedding" else
+                        (a.abs() > 3.0) if l.algo == "batchnorm" else
+                        (a.abs() > 0.97) if l.algo in ["tanh", "sigmoid"] else
+                        (a <= 0) if l.algo == "relu" else
+                        (a.max(dim=-1).values > 0.97) if l.algo == "softmax" else
+                        (a.abs() > 5.0) # if l.algo == "linear" or etc.
+                    ).float().mean().item(),
                     "histogram": {"x": ahx, "y": ahy},
                 },
                 "gradient": {
