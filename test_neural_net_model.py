@@ -159,28 +159,40 @@ class TestNeuralNetModel(unittest.TestCase):
             self.assertIsNotNone(cost)
 
     @parameterized.expand([
-        ([9, 9, 9], ["sigmoid"] * 2, None, [0.5] * 9, [1.0] + [0.0] * 8,),
-        ([9, 9, 9], ["relu", "softmax"], "adam", [0.5] * 9, [1]),
-        ([9, 9, 9], ["tanh"] * 2, None, [0.5] * 9, [1.0] + [0.0] * 8,),
-        ([18, 9, 3], ["relu", "sigmoid"], "adam", [0.5] * 18, [1.0] + [0.0] * 2,),
-        ([9, 18, 9], ["sigmoid", "linear", "softmax"], None, [0.5] * 9, [1]),
-        ([4, 8, 16], ["sigmoid"] * 2, None, [0.5] * 4, [1.0] + [0.0] * 15,),
-        ([3, 3, 3, 3], ["relu", "relu", "softmax"], "adam", [0.5] * 3, [0]),
-        ([18, 9, 3], ["relu"] * 2, None, [0.5] * 18, [1.0] + [0.0] * 2,),
-        ([9, 18, 9], ["relu", "tanh"], "adam", [0.5] * 9, [1.0] + [0.0] * 8,),
-        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], "adam", [0, 5, 7], [5],),
-        ([9, 2, 6, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "softmax"], None, [0, 5, 7], [5],),
-        ([9, 2, 4, 9, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "flatten", "linear", "softmax"], None,
+        ([9, 9, 9], ["sigmoid"] * 2, None, 1.0,
+         [0.5] * 9, [1.0] + [0.0] * 8,),
+        ([9, 9, 9], ["relu", "softmax"], "adam", 1.0,
+         [0.5] * 9, [1]),
+        ([9, 9, 9], ["tanh"] * 2, None, 1.0,
+         [0.5] * 9, [1.0] + [0.0] * 8,),
+        ([18, 9, 3], ["relu", "sigmoid"], "adam", 0.9,
+         [0.5] * 18, [1.0] + [0.0] * 2,),
+        ([9, 18, 9], ["sigmoid", "linear", "softmax"], None, 0.7,
+         [0.5] * 9, [1]),
+        ([4, 8, 16], ["sigmoid"] * 2, None, 1.0,
+         [0.5] * 4, [1.0] + [0.0] * 15,),
+        ([3, 3, 3, 3], ["relu", "relu", "softmax"],"adam", 0.5,
+         [0.5] * 3, [0]),
+        ([18, 9, 3], ["relu"] * 2, None, 1.0,
+         [0.5] * 18, [1.0] + [0.0] * 2,),
+        ([9, 18, 9], ["relu", "tanh"], "adam", 1.0,
+         [0.5] * 9, [1.0] + [0.0] * 8,),
+        ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], 1.0,
+         "adam", [0, 5, 7], [5],),
+        ([9, 2, 6, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "softmax"], None, 1.0,
+         [0, 5, 7], [5],),
+        ([9, 2, 4, 9, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "flatten", "linear", "softmax"], None, 0.1,
          [0, 5, 7, 8], [5],),
     ])
-    def test_train(self, layer_sizes: list[int], algos: list[str], optimizer: str, sample_input: list[float],
-                   target: list[float]):
+    def test_train(self, layer_sizes: list[int], algos: list[str], optimizer: str, confidence: float,
+                   sample_input: list[float], target: list[float]):
 
         # clean up any persisted previous test model
         NeuralNetworkModel.delete("test")
 
         # create model
-        model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos, optimizer_algo=optimizer)
+        model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos, optimizer_algo=optimizer,
+                                   confidence=confidence)
 
         initial_params = [p.tolist() for p in model.params]
         _, initial_cost = model.compute_output(sample_input, target)

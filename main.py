@@ -133,6 +133,11 @@ class CreateModelRequest(ModelRequest):
         examples=[0.1],
         description="Batch Normalization Momentum"
     )
+    confidence: float = Field(
+        1.0,
+        examples=[1.0],
+        description="Confidence factor for the last layer with weights"
+    )
 
 
 class ActivationRequest(ModelRequest):
@@ -228,7 +233,7 @@ def create_model(body: CreateModelRequest = Body(...)):
     model_id = body.model_id
     log.info(f"Requesting creation of model {model_id}")
     model = NeuralNetworkModel(model_id, body.layer_sizes, body.weight_algo, body.bias_algo, body.activation_algos,
-                               body.optimizer, (body.batchnorm_eps, body.batchnorm_momentum))
+                               body.optimizer, (body.batchnorm_eps, body.batchnorm_momentum), body.confidence)
     model.serialize()
     return {"message": f"Model {model_id} created and saved successfully"}
 
