@@ -69,11 +69,25 @@ class EmbeddingLayer(Layer):
 
 class FlattenLayer(Layer):
     algo = "flatten"
+    def __init__(self, ratio: int):
+        super().__init__()
+        self.ratio = ratio
+
+    @property
+    def state_dict(self) -> dict: return {"ratio": self.ratio}
+
+    @state_dict.setter
+    def state_dict(self, new_state: dict): self.ratio = new_state["ratio"]
+
     def forward(self, input_tensor: Tensor) -> Tensor:
-        if input_tensor.dim() > 2: # batch input
-            flattened = input_tensor.view(input_tensor.shape[0], -1)
-        else:
-            flattened = input_tensor.view(-1)
+        flattened = input_tensor
+        if input_tensor.ndim > 1: # flatten by ratio
+            view_shape = list(input_tensor.shape)
+            view_shape[-2] //= self.ratio
+            view_shape[-1] *= self.ratio
+            flattened = input_tensor.view(*view_shape)
+            if view_shape[-2] == 1: # squeeze out dimension if 1
+                flattened = flattened.squeeze(len(view_shape) - 2)
         return flattened
 
 class LinearLayer(Layer):
@@ -143,8 +157,9 @@ class BatchNormLayer(Layer):
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         if self.training: # calculate current batch norm statistics during training
-            mean = input_tensor.mean(0, keepdim=True)
-            variance = input_tensor.var(0, keepdim=True)
+            dim = tuple(range(input_tensor.ndim - 1))
+            mean = input_tensor.mean(dim, keepdim=True)
+            variance = input_tensor.var(dim, keepdim=True)
             # update overall statistics
             with torch.no_grad():
                 self.mean = (1 - self.momentum) * self.mean + self.momentum * mean
@@ -209,7 +224,7 @@ class MultiLayerPerceptron:
             if algo == "embedding":
                 layer = EmbeddingLayer(in_sz, out_sz)
             elif algo == "flatten":
-                layer = FlattenLayer()
+                layer = FlattenLayer(out_sz // max(1, in_sz))
             elif algo == "linear":
                 layer = LinearLayer(in_sz, out_sz, bias_algo)
             elif algo == "batchnorm":
@@ -241,9 +256,7 @@ class MultiLayerPerceptron:
             # add layer
             self.layers.append(layer)
             # shift to next layer sizes
-            if algo == "embedding":
-                size_idx += 2
-            elif algo == "linear":
+            if algo in ["embedding", "flatten", "linear"]:
                 size_idx += 1
 
     @property

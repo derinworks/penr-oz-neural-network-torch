@@ -68,29 +68,33 @@ class TestNeuralNetModel(unittest.TestCase):
     @parameterized.expand([
         ([9, 9, 9], "xavier", "random", None,
          [LinearLayer, ReluLayer, LinearLayer, ReluLayer],
-         [[(9,9),(9,)],[],[(9,9),(9,)],[]],),
+         [[(9,9),(9,)],[],[(9,9),(9,)],[]], [],),
         ([18, 9, 3], "xavier", "zeros", ["relu", "softmax"],
          [LinearLayer, ReluLayer, LinearLayer, SoftmaxLayer],
-         [[(18,9),(9,)],[],[(9,3),(3,)],[]],),
+         [[(18,9),(9,)],[],[(9,3),(3,)],[]], [],),
         ([9, 18, 9], "he", "zeros", ["sigmoid"] * 2,
          [LinearLayer, SigmoidLayer, LinearLayer, SigmoidLayer],
-         [[(9,18),(18,)],[],[(18,9),(9,)],[]]),
+         [[(9,18),(18,)],[],[(18,9),(9,)],[]], [],),
         ([4, 8, 16], "he", "random", ["tanh"] * 2,
          [LinearLayer, TanhLayer, LinearLayer, TanhLayer],
-         [[(4,8),(8,)],[],[(8,16),(16,)],[]]),
+         [[(4,8),(8,)],[],[(8,16),(16,)],[]], [],),
         ([3, 3, 3, 3], "he", "random", ["relu", "linear", "tanh", "softmax"],
          [LinearLayer, ReluLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
-         [[(3,3),(3,)],[],[(3,3),(3,)],[],[(3,3),(3,)],[]],),
+         [[(3,3),(3,)],[],[(3,3),(3,)],[],[(3,3),(3,)],[]], [],),
         ([18, 2, 6, 20, 18], "gaussian", "random", ["embedding", "tanh", "linear", "softmax"],
          [EmbeddingLayer, FlattenLayer, LinearLayer, TanhLayer, LinearLayer, SoftmaxLayer],
-         [[(18,2)],[],[(6,20),(20,)],[],[(20,18),(18,)],[]],),
+         [[(18,2)],[],[(6,20),(20,)],[],[(20,18),(18,)],[]], [],),
         ([18, 2, 6, 20, 18], "he", "zeros", ["embedding", "linear", "batchnorm", "tanh", "softmax"],
          [EmbeddingLayer, FlattenLayer, LinearLayer, BatchNormLayer, TanhLayer, LinearLayer, SoftmaxLayer],
-         [[(18,2)],[],[(6,20),(20,)],[(20,), (20,)],[],[(20,18),(18,)],[]],),
+         [[(18,2)],[],[(6,20),(20,)],[(20,), (20,)],[],[(20,18),(18,)],[]], [],),
+        ([18, 2, 6, 10, 20, 18], "he", "", ["embedding", "linear", "batchnorm", "tanh", "flatten", "linear", "softmax"],
+         [EmbeddingLayer, FlattenLayer, LinearLayer, BatchNormLayer, TanhLayer, FlattenLayer, LinearLayer, SoftmaxLayer],
+         [[(18, 2)], [], [(6, 10)], [(10,), (10,)], [], [], [(20, 18)], []], [3, 2],),
     ])
     def test_multi_layer_perceptron_init(self, l_sizes: list[int], w_algo: str, b_algo: str, fwd_algos: list[str],
                                          expected_layers: list[str],
-                                         expected_layer_shapes: list[list[tuple]]):
+                                         expected_layer_shapes: list[list[tuple]],
+                                         expected_flatten_ratios: list[int]):
         mlp = MultiLayerPerceptron(l_sizes, w_algo, b_algo, fwd_algos)
 
         self.assertListEqual(expected_layers, [l.__class__ for l in mlp.layers])
@@ -101,6 +105,9 @@ class TestNeuralNetModel(unittest.TestCase):
         for hidden_layer in mlp.layers[1:-2]:
             self.assertTrue(hidden_layer.hidden)
         self.assertFalse(mlp.layers[-1].hidden)
+        flatten_layers: list[FlattenLayer] = [l for l in mlp.layers if isinstance(l, FlattenLayer)]
+        for expected_ratio, flatten_layer in zip(expected_flatten_ratios, flatten_layers):
+            self.assertEqual(expected_ratio, flatten_layer.ratio)
 
     @parameterized.expand([
         ([3, 3], None, None, 12,),
@@ -132,6 +139,8 @@ class TestNeuralNetModel(unittest.TestCase):
         ([3, 3, 3, 3], ["relu", "relu", "softmax"], [0.5] * 3, None,),
         ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [0, 5, 8], [2],),
         ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], [[0, 5, 8],[1, 3, 7]], [[2],[4]],),
+        ([9, 2, 4, 9, 18, 9], ["embedding", "tanh", "flatten", "linear", "softmax"],
+         [[0, 5, 8, 2], [1, 3, 7, 4]], [[2], [4]],),
     ])
     def test_compute_output(self, layer_sizes: list[int], algos: list[str], sample_input: list, target):
         model = NeuralNetworkModel("test", layer_sizes, activation_algos=algos)
@@ -161,6 +170,8 @@ class TestNeuralNetModel(unittest.TestCase):
         ([9, 18, 9], ["relu", "tanh"], "adam", [0.5] * 9, [1.0] + [0.0] * 8,),
         ([9, 2, 6, 18, 9], ["embedding", "tanh", "softmax"], "adam", [0, 5, 7], [5],),
         ([9, 2, 6, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "softmax"], None, [0, 5, 7], [5],),
+        ([9, 2, 4, 9, 18, 9], ["embedding", "linear", "batchnorm", "tanh", "flatten", "linear", "softmax"], None,
+         [0, 5, 7, 8], [5],),
     ])
     def test_train(self, layer_sizes: list[int], algos: list[str], optimizer: str, sample_input: list[float],
                    target: list[float]):
