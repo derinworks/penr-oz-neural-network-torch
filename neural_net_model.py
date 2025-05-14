@@ -268,7 +268,7 @@ class MultiLayerPerceptron:
 
 class NeuralNetworkModel(MultiLayerPerceptron):
     def __init__(self, model_id, layer_sizes: list[int] = None, weight_algo="xavier", bias_algo="zeros",
-                 activation_algos=None, optimizer_algo="adam", batchnorm=(1e-5, 0.1)):
+                 activation_algos=None, optimizer_algo="adam", batchnorm=(1e-5, 0.1), confidence=1.0):
         """
         Initialize a neural network with multiple layers.
         :param layer_sizes: List of integers where each integer represents a dimension of a layer.
@@ -280,6 +280,7 @@ class NeuralNetworkModel(MultiLayerPerceptron):
         if len(self.params) > 0:
             if optimizer_algo == "adam":
                 self.optimizer = torch.optim.Adam(self.params)
+            self.weights[-1] *= confidence
         self.progress = []
         self.training_data_buffer: list[Tuple] = []
         self.training_buffer_size: int = self.num_params
